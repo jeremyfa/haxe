@@ -2,5 +2,10 @@
   shell: pwsh
   run: |
     Set-PSDebug -Trace 1
+    # The mingw GCC on the runners (GCC 14) turns incompatible pointer types into
+    # errors. luv 0.5.13 only matches ctypes older than 0.23 (as on macOS), and
+    # pcre2 8.0.4 is the first release with the fixed cast.
+    opam pin add ctypes 0.21.1 --no-action
+    opam pin add pcre2 8.0.4 --no-action
     opam install haxe --deps-only
     opam list
