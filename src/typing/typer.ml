@@ -750,11 +750,17 @@ and format_string ctx s p =
 		let p = { p with pmin = !min; pmax = !min + len } in
 		add_expr (enext,p) len
 	in
+	let len = String.length s in
+	(* Indices below are bytes of the UTF-8 string, but positions are counted in
+	   codepoints, like the lexer does. cp.(i) is the number of codepoints in s[0..i). *)
+	let cp = Array.make (len + 1) 0 in
+	for i = 0 to len - 1 do
+		cp.(i + 1) <- if (Char.code (String.unsafe_get s i)) land 0xC0 = 0x80 then cp.(i) else cp.(i) + 1
+	done;
 	let add_sub start pos =
 		let len = pos - start in
-		if len > 0 || !e = None then add (EConst (String (String.sub s start len,SDoubleQuotes))) len
+		if len > 0 || !e = None then add (EConst (String (String.sub s start len,SDoubleQuotes))) (cp.(pos) - cp.(start))
 	in
-	let len = String.length s in
 	let rec parse start pos =
 		if pos = len then add_sub start pos else
 		let c = String.unsafe_get s pos in
@@ -794,7 +800,7 @@ and format_string ctx s p =
 			if i = len then
 				match groups with
 				| [] -> die "" __LOC__
-				| g :: _ -> typing_error ("Unclosed " ^ gname) { p with pmin = !pmin + g + 1; pmax = !pmin + g + 2 }
+				| g :: _ -> typing_error ("Unclosed " ^ gname) { p with pmin = !pmin + cp.(g) + 1; pmax = !pmin + cp.(g) + 2 }
 			else
 				let c = String.unsafe_get s i in
 				if c = gopen then
@@ -811,7 +817,7 @@ and format_string ctx s p =
 		min := !min + 2;
 		begin
 			let e =
-				let ep = { p with pmin = !pmin + pos + 2; pmax = !pmin + send + 1 } in
+				let ep = { p with pmin = !pmin + cp.(pos) + 2; pmax = !pmin + cp.(send) + 1 } in
 				let error msg pos =
 					if Lexer.string_is_whitespace scode then typing_error "Expression cannot be empty" ep
 					else typing_error msg pos
@@ -820,7 +826,7 @@ and format_string ctx s p =
 					| ParseSuccess(data,_,_) -> data
 					| ParseError(_,(msg,p),_) -> error (Parser.error_msg msg) p
 			in
-			add_expr e slen
+			add_expr e (cp.(send) - cp.(pos + 1))
 		end;
 		min := !min + 1;
 		parse (send + 1) (send + 1)
