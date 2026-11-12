@@ -375,6 +375,11 @@
 		"platforms": ["js"]
 	},
 	{
+		"name": "ServerCacheOnError",
+		"define": "server-cache-on-error",
+		"doc": "On the compilation server, when a compilation has errors, still cache the modules of the files that have none. By default nothing is cached then."
+	},
+	{
 		"name": "SourceMap",
 		"define": "source-map",
 		"doc": "Generate source map for compiled files.",

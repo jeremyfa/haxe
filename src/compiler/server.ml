@@ -810,9 +810,82 @@ let after_arg_parsing sctx ctx =
 		Hashtbl.add sctx.class_paths sign com.class_path;
 		()
 
+(*
+	With -D server-cache-on-error, a compilation that has errors still caches the modules of the files
+	that have none. Without this, one error anywhere means that every display request types the whole
+	project again, until a compilation succeeds.
+
+	This is only done when typing went to its end: errors in expressions are reported and typing goes
+	on, so every module is complete at that point. The modules of the files that have errors are not
+	cached and are tainted, so that the modules which depend on them are typed again as well.
+*)
+let cache_context_with_errors sctx ctx =
+	let com = ctx.com in
+	let typing_completed =
+		if is_diagnostics com then
+			(* Diagnostics collect the errors and go on. ctx.has_error means something stopped them. *)
+			not ctx.has_error
+		else
+			(* Stopped right after typing, before any filter could change the modules. *)
+			com.stage = CTypingDone
+	in
+	if typing_completed && com.display.dms_full_typing && com.display.dms_populate_cache then begin
+		let positions = List.fold_left (fun acc cm ->
+			if cm.cm_severity = MessageSeverity.Error then cm.cm_pos :: acc else acc
+		) [] ctx.messages in
+		let positions = List.fold_left (fun acc (_,p,_,sev,_) ->
+			if sev = MessageSeverity.Error then p :: acc else acc
+		) positions com.shared.shared_display_information.diagnostics_messages in
+		(* The modules of each context, by file. *)
+		let module_files = Hashtbl.create 0 in
+		let rec collect com in_macro =
+			com.module_lut#iter (fun _ m ->
+				Hashtbl.replace module_files (Path.UniqueKey.lazy_key m.m_extra.m_file) in_macro
+			);
+			match com.get_macros() with
+			| None -> ()
+			| Some mcom -> collect mcom true
+		in
+		collect com false;
+		let error_files = Hashtbl.create 0 in
+		(* Every error has to be in the file of a module of the compilation itself. An error without a
+		   position, or in the code of a macro, can't be traced back to the modules it makes wrong. *)
+		let known = positions <> [] && List.for_all (fun p ->
+			if p == null_pos || p.pfile = "" || p.pfile = "?" then
+				false
+			else begin
+				let key = com.file_keys#get p.pfile in
+				match Hashtbl.find_opt module_files key with
+				| Some false ->
+					Hashtbl.replace error_files key p.pfile;
+					true
+				| Some true | None ->
+					false
+			end
+		) positions in
+		if known then begin
+			let has_errors m = Hashtbl.mem error_files (Path.UniqueKey.lazy_key m.m_extra.m_file) in
+			let rec taint com =
+				com.module_lut#iter (fun _ m ->
+					if has_errors m then m.m_extra.m_cache_state <- MSBad (Tainted "has_errors")
+				);
+				Option.may taint (com.get_macros())
+			in
+			taint com;
+			(* An earlier version of these modules could still be in the cache. *)
+			Hashtbl.iter (fun key _ -> sctx.cs#taint_modules key "has_errors") error_files;
+			let num = CommonCache.cache_context_partially sctx.cs com (fun m -> not (has_errors m)) in
+			ServerMessage.cached_modules com "" num;
+			ServerMessage.message (Printf.sprintf "Not cached, has errors: %s"
+				(String.concat ", " (Hashtbl.fold (fun _ file acc -> file :: acc) error_files [])))
+		end
+	end
+
 let after_compilation sctx ctx =
 	if not (has_error ctx) then
 		maybe_cache_context sctx ctx.com
+	else if Common.defined ctx.com Define.ServerCacheOnError then
+		cache_context_with_errors sctx ctx
 
 let mk_length_prefixed_communication allow_nonblock chin chout =
 	let sin = Unix.descr_of_in_channel chin in

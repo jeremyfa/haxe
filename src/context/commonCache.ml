@@ -82,6 +82,26 @@ let rec cache_context cs com =
 	| None -> ()
 	| Some com -> cache_context cs com
 
+(*
+	Like cache_context, for a compilation that had errors: caches the modules [keep] accepts and returns
+	how many there are. This looks at every module that was loaded, because com.modules is only filled
+	once typing has succeeded.
+*)
+let rec cache_context_partially cs com keep =
+	let cc = get_cache com in
+	let sign = Define.get_signature com.defines in
+	let num = ref 0 in
+	com.module_lut#iter (fun _ m ->
+		if keep m then begin
+			let cc = if m.m_extra.m_sign == sign then cc else cs#get_context m.m_extra.m_sign in
+			cc#cache_module m.m_path m;
+			incr num
+		end
+	);
+	!num + (match com.get_macros() with
+	| None -> 0
+	| Some com -> cache_context_partially cs com keep)
+
 let maybe_add_context_sign cs com desc =
 	let sign = Define.get_signature com.defines in
 	ignore(cs#add_info sign desc com.platform com.class_path com.defines)
