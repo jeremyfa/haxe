@@ -67,8 +67,17 @@ type typer_module = {
 	mutable import_statements : import list;
 }
 
+(*
+	The pending tasks of one typer pass, as a double-ended queue: `delay` adds
+	at the front and `delay_late` at the back. `dq_back` is in reverse order.
+*)
+type delayed_queue = {
+	mutable dq_front : (unit -> unit) list;
+	mutable dq_back : (unit -> unit) list;
+}
+
 type typer_globals = {
-	mutable delayed : (typer_pass * (unit -> unit) list) list;
+	delayed : delayed_queue array; (* one queue per typer pass, see `pass_index` *)
 	mutable debug_delayed : (typer_pass * ((unit -> unit) * string * typer) list) list;
 	doinline : bool;
 	retain_meta : bool;
@@ -366,29 +375,27 @@ let gen_local ctx t p =
 let is_gen_local v =
 	String.unsafe_get v.v_name 0 = String.unsafe_get gen_local_prefix 0
 
-let delay ctx p f =
-	let rec loop = function
-		| [] -> [p,[f]]
-		| (p2,l) :: rest ->
-			if p2 = p then
-				(p, f :: l) :: rest
-			else if p2 < p then
-				(p2,l) :: loop rest
-			else
-				(p,[f]) :: (p2,l) :: rest
-	in
-	ctx.g.delayed <- loop ctx.g.delayed
+let pass_index = function
+	| PBuildModule -> 0
+	| PBuildClass -> 1
+	| PConnectField -> 2
+	| PTypeField -> 3
+	| PCheckConstraint -> 4
+	| PForce -> 5
+	| PFinal -> 6
 
+let create_delayed () =
+	Array.init 7 (fun _ -> { dq_front = []; dq_back = [] })
+
+(* Runs `f` before the other pending tasks of pass `p`. *)
+let delay ctx p f =
+	let q = ctx.g.delayed.(pass_index p) in
+	q.dq_front <- f :: q.dq_front
+
+(* Runs `f` after the other pending tasks of pass `p`. *)
 let delay_late ctx p f =
-	let rec loop = function
-		| [] -> [p,[f]]
-		| (p2,l) :: rest ->
-			if p2 <= p then
-				(p2,l) :: loop rest
-			else
-				(p,[f]) :: (p2,l) :: rest
-	in
-	ctx.g.delayed <- loop ctx.g.delayed
+	let q = ctx.g.delayed.(pass_index p) in
+	q.dq_back <- f :: q.dq_back
 
 let delay_if_mono ctx p t f = match follow t with
 	| TMono _ ->
@@ -396,18 +403,38 @@ let delay_if_mono ctx p t f = match follow t with
 	| _ ->
 		f()
 
-let rec flush_pass ctx p (where:string) =
-	match ctx.g.delayed with
-	| (p2,l) :: rest when p2 <= p ->
-		(match l with
-		| [] ->
-			ctx.g.delayed <- rest;
-		| f :: l ->
-			ctx.g.delayed <- (p2,l) :: rest;
-			f());
-		flush_pass ctx p where
-	| _ ->
-		()
+(*
+	Runs the pending tasks of every pass up to `p`, lowest pass first. A task
+	can add other tasks, including to a lower pass: the lowest pass is looked up
+	again after each task.
+*)
+let flush_pass ctx p (where:string) =
+	let delayed = ctx.g.delayed in
+	let last = pass_index p in
+	let rec next i =
+		if i > last then
+			None
+		else begin
+			let q = delayed.(i) in
+			if q.dq_front == [] && q.dq_back != [] then begin
+				q.dq_front <- List.rev q.dq_back;
+				q.dq_back <- [];
+			end;
+			match q.dq_front with
+			| [] ->
+				next (i + 1)
+			| f :: l ->
+				q.dq_front <- l;
+				Some f
+		end
+	in
+	let rec loop () = match next 0 with
+		| None -> ()
+		| Some f ->
+			f();
+			loop()
+	in
+	loop()
 
 let make_pass ctx f = f
 
