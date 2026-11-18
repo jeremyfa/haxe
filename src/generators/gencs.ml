@@ -8785,6 +8785,9 @@ let generate_field_accessors gctx c =
 			match cf.cf_kind with
 			| Var _ when is_physical_var_field cf && not (Meta.has Meta.Unreflective cf.cf_meta) ->
 				Some (cf.cf_name, get_native_field_name cf, cs_type_of_type gctx cf.cf_type)
+			| Method MethDynamic when not (Meta.has Meta.Unreflective cf.cf_meta) ->
+				(* a dynamic method is a field that holds a function *)
+				Some (cf.cf_name, get_native_field_name cf, function_type)
 			| _ -> None
 		) c.cl_ordered_fields in
 
