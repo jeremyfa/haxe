@@ -68,6 +68,7 @@ class Main {
 		testBreakInSwitchInLoop();
 		testVoidTypeParam();
 		testExceptionSubclasses();
+		testTypedStructures();
 		#if hxcoro
 		CoroutineTests.run();
 		#end
@@ -1965,6 +1966,298 @@ class Main {
 		} catch (e:ExceptionBase) {
 			eq("custom", e.message);
 		}
+	}
+	static var structLog:Array<String> = [];
+
+	static function logged(name:String, v:Int):Int {
+		structLog.push(name);
+		return v;
+	}
+
+	// true when the object is an instance of a class generated for a structure
+	static function isTyped(v:Dynamic):Bool {
+		return cs.Syntax.code("({0}).GetType().Namespace == \"haxe.generated\"", v);
+	}
+
+	static function sameClass(a:Dynamic, b:Dynamic):Bool {
+		return cs.Syntax.code("({0}).GetType() == ({1}).GetType()", a, b);
+	}
+
+	static function firstOf<T>(p:TPair<T>):T {
+		return p.a;
+	}
+
+	static function makePoint(x:Int, y:Int):TPoint {
+		return {x: x, y: y};
+	}
+
+	static function sumPoint(p:TPoint):Int {
+		return p.x + p.y;
+	}
+
+	static function testTypedStructures() {
+		// Structures are created as typed classes and read through typed fields
+		var p:TPoint = {x: 1, y: 2};
+		t(isTyped(p));
+		eq(1, p.x);
+		eq(2, p.y);
+		p.x = 10;
+		p.y += 5;
+		eq(10, p.x);
+		eq(7, p.y);
+		eq(10, p.x++);
+		eq(11, p.x);
+		eq(12, ++p.x);
+		eq(11, --p.x);
+		eq(11, p.x--);
+		eq(10, p.x);
+		p.y *= 2;
+		eq(14, p.y);
+		eq(20, p.x = 20);
+		eq(34, sumPoint(p));
+		eq(7, sumPoint({x: 3, y: 4}));
+		t(isTyped(makePoint(1, 2)));
+
+		// the same fields through another typedef: same class
+		var q:TPoint2 = {x: 3, y: 4};
+		t(sameClass(p, q));
+		var noTypedef = {x: 5, y: 6};
+		t(sameClass(p, noTypedef));
+		p = noTypedef;
+		eq(5, p.x);
+
+		// values are evaluated in the order of the source
+		structLog = [];
+		var ordered:TPoint = {y: logged("y", 2), x: logged("x", 1)};
+		eq("y,x", structLog.join(","));
+		eq(1, ordered.x);
+		eq(2, ordered.y);
+
+		// optional fields that are not given
+		var o:TOpt = {name: "a"};
+		t(isTyped(o));
+		eq("a", o.name);
+		eq(null, o.size);
+		eq(null, o.label);
+		f(Reflect.hasField(o, "size"));
+		t(Reflect.hasField(o, "name"));
+		eq("name", Reflect.fields(o).join(","));
+		o.size = 3;
+		t(Reflect.hasField(o, "size"));
+		eq(3, o.size);
+		eq("name,size", Reflect.fields(o).join(","));
+		o.size += 2;
+		eq(5, o.size);
+		o.label = "l";
+		o.label += "m";
+		eq("lm", o.label);
+		eq("name,size,label", Reflect.fields(o).join(","));
+		var full:TOpt = {name: "b", size: 1, label: "c"};
+		t(sameClass(o, full));
+
+		// Reflect.deleteField
+		t(Reflect.deleteField(o, "size"));
+		f(Reflect.hasField(o, "size"));
+		eq(null, o.size);
+		f(Reflect.deleteField(o, "size"));
+		eq("name,label", Reflect.fields(o).join(","));
+		o.size = 9;
+		t(Reflect.hasField(o, "size"));
+		eq(9, Reflect.field(o, "size"));
+
+		// a field the structure does not have
+		Reflect.setField(o, "extra", 5);
+		eq(5, Reflect.field(o, "extra"));
+		t(Reflect.hasField(o, "extra"));
+		eq("name,size,label,extra", Reflect.fields(o).join(","));
+		t(Reflect.deleteField(o, "extra"));
+		f(Reflect.hasField(o, "extra"));
+		t(Reflect.field(o, "missing") == null);
+
+		// Reflect on typed fields
+		var r:TPoint = {x: 1, y: 2};
+		eq(1, Reflect.field(r, "x"));
+		Reflect.setField(r, "x", 42);
+		eq(42, r.x);
+		eq("x,y", Reflect.fields(r).join(","));
+
+		// through Dynamic, a field can hold a value of any type
+		var d:Dynamic = r;
+		eq(42, d.x);
+		d.x = "hello";
+		eq("hello", d.x);
+		t(Reflect.hasField(r, "x"));
+		eq("y,x", Reflect.fields(r).join(","));
+		d.x = 2.5;
+		eq(2.5, d.x);
+		d.x = 7;
+		eq(7, r.x);
+		eq("x,y", Reflect.fields(r).join(","));
+		d.x = null;
+		t(d.x == null);
+		t(Reflect.hasField(r, "x"));
+		d.x = 3.0;
+		eq(3, r.x);
+		d.z = 1;
+		eq(1, d.z);
+
+		// an object literal typed as Dynamic
+		var bag:Dynamic = {a: 1, b: "two"};
+		eq(1, bag.a);
+		eq("two", bag.b);
+		bag.a = "one";
+		bag.c = 3;
+		eq("one", bag.a);
+		eq(3, bag.c);
+		eq(3, Reflect.fields(bag).length);
+
+		// Reflect.copy
+		var src:TPoint = {x: 1, y: 2};
+		var copy:TPoint = Reflect.copy(src);
+		eq(1, copy.x);
+		eq(2, copy.y);
+		copy.x = 99;
+		eq(1, src.x);
+		eq(99, copy.x);
+
+		// an instance of a class where a structure is expected
+		var pc:TPoint = new PointClass(5, 6);
+		f(isTyped(pc));
+		eq(5, pc.x);
+		pc.x = 8;
+		eq(8, pc.x);
+		pc.y += 1;
+		eq(7, pc.y);
+		pc.x++;
+		eq(9, pc.x);
+		eq(16, sumPoint(pc));
+
+		// an object with more fields than the structure
+		var wide = {x: 1, y: 2, z: 3};
+		var narrow:TPoint = wide;
+		eq(1, narrow.x);
+		narrow.y = 20;
+		eq(20, wide.y);
+		narrow.x++;
+		eq(2, wide.x);
+		eq(22, sumPoint(wide));
+
+		// a dynamic object where a structure is expected
+		var parsed:TPoint = haxe.Json.parse('{"x": 1, "y": 2}');
+		eq(1, parsed.x);
+		parsed.y += 3;
+		eq(5, parsed.y);
+		eq(6, sumPoint(parsed));
+
+		// type parameters
+		var pi:TPair<Int> = {a: 1, b: 2};
+		var ps:TPair<String> = {a: "s", b: 3};
+		t(isTyped(pi));
+		t(sameClass(pi, ps));
+		eq(1, pi.a);
+		eq("s", ps.a);
+		eq(1, firstOf(pi));
+		eq("s", firstOf(ps));
+		pi.a += 2;
+		eq(3, pi.a);
+		pi.a++;
+		eq(4, pi.a);
+		ps.a += "t";
+		eq("st", ps.a);
+		eq(5, pi.b + ps.b);
+
+		// Int given to a Float field
+		var fp:TFloatPoint = {x: 1, y: 2.5};
+		eq(1.0, fp.x);
+		fp.x += 0.5;
+		eq(1.5, fp.x);
+		++fp.y;
+		eq(3.5, fp.y);
+		fp.y++;
+		eq(4.5, fp.y);
+		Reflect.setField(fp, "x", 2);
+		eq(2.0, fp.x);
+
+		// the object of the field is evaluated once
+		var points:Array<TPoint> = [{x: 1, y: 2}, {x: 3, y: 4}];
+		t(isTyped(points[0]));
+		var i = 0;
+		points[i++].x += 10;
+		eq(1, i);
+		eq(11, points[0].x);
+		points[i++].y++;
+		eq(2, i);
+		eq(5, points[1].y);
+		eq(3, points[1].x--);
+		eq(2, points[1].x);
+
+		// nested structures
+		var line:TLine = {from: {x: 1, y: 2}, to: {x: 3, y: 4}};
+		t(isTyped(line));
+		t(isTyped(line.from));
+		t(sameClass(line.from, p));
+		line.to.x += line.from.x;
+		eq(4, line.to.x);
+
+		// function fields
+		var h = {f: function(x:Int) return x * 2, n: 3};
+		eq(6, h.f(h.n));
+		var fn = h.f;
+		eq(8, fn(4));
+		h.f = function(x:Int) return x + 1;
+		eq(4, h.f(3));
+
+		// a custom toString stays in charge
+		var ts = {toString: function() return "custom"};
+		eq("custom", Std.string(ts));
+
+		// what the rest of the standard library sees
+		var s:TPoint = {x: 1, y: 2};
+		t(Type.typeof(s).match(TObject));
+		eq(null, Type.getClass(s));
+		t(Reflect.isObject(s));
+		eq("{x: 1, y: 2}", Std.string(s));
+		eq('{"x":1,"y":2}', haxe.Json.stringify(s));
+		var mixed:TMixed = {flag: true, ratio: 0.5, name: "n", items: [1, 2]};
+		eq("{flag: true, ratio: 0.5, name: n, items: [1,2]}", Std.string(mixed));
+		eq('{"flag":true,"ratio":0.5,"name":"n","items":[1,2]}', haxe.Json.stringify(mixed));
+		var un:TPoint = haxe.Unserializer.run(haxe.Serializer.run(s));
+		eq(1, un.x);
+		eq(2, un.y);
+		var missing:TOpt = {name: "m"};
+		eq("{name: m}", Std.string(missing));
+		eq('{"name":"m"}', haxe.Json.stringify(missing));
+
+		// haxe.PosInfos is created without its customParams field
+		var pos = here();
+		t(isTyped(pos));
+		t(pos.lineNumber > 0);
+		eq("Main.hx", pos.fileName);
+		eq(null, pos.customParams);
+		f(Reflect.hasField(pos, "customParams"));
+		t(Reflect.hasField(pos, "methodName"));
+	}
+
+	static function here(?pos:PosInfos):PosInfos {
+		return pos;
+	}
+}
+
+typedef TPoint = {x:Int, y:Int}
+typedef TPoint2 = {x:Int, y:Int}
+typedef TOpt = {name:String, ?size:Int, ?label:String}
+typedef TPair<T> = {a:T, b:Int}
+typedef TFloatPoint = {x:Float, y:Float}
+typedef TLine = {from:TPoint, to:TPoint}
+typedef TMixed = {flag:Bool, ratio:Float, name:String, items:Array<Int>}
+
+class PointClass {
+	public var x:Int;
+	public var y:Int;
+
+	public function new(x:Int, y:Int) {
+		this.x = x;
+		this.y = y;
 	}
 }
 

@@ -150,8 +150,7 @@ class Cs {
 	public static function trace(v:Dynamic, ?infos:haxe.PosInfos):Void {
 		var str = toString(v);
 		if (infos != null) {
-			str = cs.Syntax.code("((haxe.lang.HaxeDynamicObject){0})._hx_getField(\"fileName\")", infos) + ":"
-				+ cs.Syntax.code("((haxe.lang.HaxeDynamicObject){0})._hx_getField(\"lineNumber\")", infos) + ": " + str;
+			str = infos.fileName + ":" + infos.lineNumber + ": " + str;
 		}
 		cs.Syntax.code("global::System.Console.WriteLine({0})", str);
 	}

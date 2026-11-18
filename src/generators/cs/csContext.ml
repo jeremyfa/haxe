@@ -33,6 +33,19 @@ open CsAst
 open CsTypeMapping
 open Genshared
 
+(* A typed field of a generated anonymous structure class *)
+type anon_field = {
+	af_name : string;
+	af_type : cs_type;
+	af_index : int;
+}
+
+(* A class generated for a known anonymous structure (see csAnon.ml) *)
+type anon_class = {
+	ac_path : path;
+	ac_fields : anon_field list;  (* in declaration order *)
+}
+
 (* Generation context - holds state for the entire code generation pass *)
 type gen_context = {
 	com : Common.context;
@@ -45,6 +58,9 @@ type gen_context = {
 	mutable all_haxe_classes : path list;  (* ALL classes that need _hx_bind() call in Program.cs *)
 	mutable all_haxe_interfaces : (path * string list) list;  (* Interfaces with their instance field names for registry *)
 	mutable interface_metadata : (path * Type.texpr) list;  (* Interfaces with metadata for RTTI registry *)
+	anon_by_key : (string, anon_class) Hashtbl.t;  (* structure classes by field names and C# types *)
+	anon_by_typedef : (path, anon_class option) Hashtbl.t;  (* cache for typedefs that are structures *)
+	anon_names : (string, unit) Hashtbl.t;  (* class names in use *)
 }
 
 (* Expression generation context - holds state for translating expressions *)
@@ -83,6 +99,9 @@ let create_context com = {
 	all_haxe_classes = [];
 	all_haxe_interfaces = [];
 	interface_metadata = [];
+	anon_by_key = Hashtbl.create 64;
+	anon_by_typedef = Hashtbl.create 64;
+	anon_names = Hashtbl.create 64;
 }
 
 (* Create a new expression context *)

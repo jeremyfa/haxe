@@ -28,6 +28,17 @@ namespace haxe.lang
     public static class Runtime
     {
         /// <summary>
+        /// Tells if a dynamic value can be stored in an Int field without losing anything:
+        /// an int, or a float with an integer value in the range of an int.
+        /// </summary>
+        public static bool isInt(object d)
+        {
+            if (d is int) return true;
+            if (d is double dbl) return dbl == (int)dbl;
+            return false;
+        }
+
+        /// <summary>
         /// Converts a dynamic value to int, handling null and type conversions.
         /// </summary>
         public static int toInt(object d)
@@ -737,11 +748,21 @@ namespace haxe.lang
             if (prop != null) return prop.GetValue(obj);
 
             // Try method (e.g. the get_Item accessor of an indexer)
+            return getNativeMethod(obj, type, name);
+        }
+
+        // Kept out of getField: the lambda captures its arguments, and C# allocates the
+        // capture when the method that declares it is entered, on every call.
+#if !NETSTANDARD
+        [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2070",
+            Justification = "Fallback reflection for non-Haxe objects")]
+#endif
+        private static object getNativeMethod(object obj, global::System.Type type, string name)
+        {
             var methods = global::System.Array.FindAll(
                 type.GetMethods(global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance),
                 m => m.Name == name);
             if (methods.Length > 0) return new NativeMethodFunction(obj, methods);
-
             return null;
         }
 

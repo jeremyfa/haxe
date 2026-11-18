@@ -1194,6 +1194,69 @@ let has_ref_out_args cf =
 	| _ -> false
 
 (* Convert Haxe expression to C# expression - mutually recursive with cs_stmt_of_texpr *)
+(* Typed access to a field of an anonymous structure (see csAnon.ml): the class
+   generated for the structure and the field, if the type of the object is one *)
+let anon_field_access gctx obj_type name =
+	match CsAnon.identify gctx obj_type with
+	| Some ac ->
+		begin match CsAnon.find_field ac name with
+		| Some af -> Some (ac, af)
+		| None -> None
+		end
+	| None -> None
+
+(* Converts the value of a structure field to the type an expression expects. They
+   differ when the structure has type parameters: the field is then an object. *)
+let anon_value_of_field ectx af target_type expr =
+	if cs_type_equals af.af_type target_type then expr
+	else match af.af_type with
+	| CsTypeObject -> cast_object_to_type target_type expr
+	| _ -> CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx expr af.af_type target_type
+
+let anon_value_to_field ectx af source_type expr =
+	if cs_type_equals af.af_type source_type then expr
+	else CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx expr source_type af.af_type
+
+(* The structure class an object literal is created as: the one of its type, which
+   CsAnon.retype_object_decls made the type its context expects when it fits *)
+let anon_literal_class gctx e fields =
+	if fields = [] then None
+	else match CsAnon.identify gctx e.etype with
+	| Some ac ->
+		let rec distinct = function
+			| [] -> true
+			| ((name, _, _), _) :: rest -> not (List.exists (fun ((n, _, _), _) -> n = name) rest) && distinct rest
+		in
+		if distinct fields && List.for_all (fun ((name, _, _), _) -> CsAnon.find_field ac name <> None) fields then Some ac else None
+	| None -> None
+
+let anon_get ectx (ac, af) obj_expr target_type =
+	anon_value_of_field ectx af target_type (CsStaticCall (CsAnon.class_type ac, CsAnon.getter_name af, [obj_expr]))
+
+(* Generates [make e1], an expression that reads and writes the structure field
+   [field_expr] found in [e1], with the object of the field evaluated once: when it is
+   not a pure expression it goes to a temporary variable first. [finish] is applied to
+   the generated expression. *)
+let anon_single_eval ectx gen e1 field_expr obj_expr result_type make finish =
+	if is_pure_expr obj_expr then
+		finish (gen ectx (make e1))
+	else begin
+		let temp_name = fresh_temp ectx in
+		let v = alloc_var VGenerated temp_name obj_expr.etype obj_expr.epos in
+		ectx.local_vars <- (v.v_id, temp_name) :: ectx.local_vars;
+		let obj_cs = gen ectx obj_expr in
+		let local = { obj_expr with eexpr = TLocal v } in
+		let rec subst e =
+			if e == field_expr then begin match e.eexpr with
+				| TField (_, fa) -> { e with eexpr = TField (local, fa) }
+				| _ -> e
+			end else
+				Type.map_expr subst e
+		in
+		let result = finish (gen ectx (make (subst e1))) in
+		wrap_call_with_prefix [CsVarDecl (temp_name, Some CsTypeObject, Some obj_cs)] result_type result
+	end
+
 let rec cs_expr_of_texpr ectx e =
 	match e.eexpr with
 	| TCall (callee, el) when (match callee.eexpr with TIdent _ -> false | _ -> true) && mark_ref_out_args callee el <> None ->
@@ -1631,6 +1694,12 @@ let rec cs_expr_of_texpr ectx e =
 				| CsTypeClass ((["haxe"; "lang"], "HaxeDynamicObject"), _) ->
 					(* Dynamic object - use _hx_setField *)
 					CsCall (CsField (obj_expr, "_hx_setField"), [CsConst (CsConstString cf.cf_name); val_cs])
+				| CsTypeObject when anon_field_access ectx.gctx inner_type cf.cf_name <> None ->
+					(* Known structure: typed write through the accessor of its class *)
+					let (ac, af) = Option.get (anon_field_access ectx.gctx inner_type cf.cf_name) in
+					let val_type = cs_type_of_type ectx.gctx e2.etype in
+					let value = anon_value_to_field ectx af val_type val_cs in
+					anon_value_of_field ectx af val_type (CsStaticCall (CsAnon.class_type ac, CsAnon.setter_name af, [obj_expr; value]))
 				| CsTypeObject ->
 					(* Object type - use Runtime.setField *)
 					CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString cf.cf_name); val_cs])
@@ -1882,6 +1951,9 @@ let rec cs_expr_of_texpr ectx e =
 						(* Anonymous object field access - check if it maps to Reflect.field *)
 						let cs_type = cs_type_of_type ectx.gctx (follow obj_expr.etype) in
 						begin match cs_type with
+						| CsTypeObject when anon_field_access ectx.gctx obj_expr.etype cf.cf_name <> None ->
+							(* Field of a known structure: typed read and write *)
+							`Typed obj_expr
 						| CsTypeObject ->
 							(* This will be generated as Reflect.field - use helper *)
 							`Field (obj_expr, cf.cf_name)
@@ -1900,6 +1972,12 @@ let rec cs_expr_of_texpr ectx e =
 					| _ -> `None
 				in
 				begin match dynamic_access with
+				| `Typed obj_expr ->
+					(* e1 op= e2 as e1 = e1 op e2, through the accessors of the structure class *)
+					anon_single_eval ectx cs_expr_of_texpr e1 inner_e1 obj_expr (cs_type_of_type ectx.gctx e.etype) (fun e1 ->
+						let value = { e1 with eexpr = TBinop (inner_op, e1, e2) } in
+						{ e with eexpr = TBinop (OpAssign, e1, value) }
+					) (fun result -> result)
 				| `Field (obj_expr, field_name) ->
 					(* Use fieldXxxAssign helpers for dynamic field compound assignment *)
 					let field_helper = match inner_op with
@@ -2301,16 +2379,38 @@ let rec cs_expr_of_texpr ectx e =
 			| _ -> None
 		in
 		let is_postfix = pos = Postfix in
+		(* Increment or decrement of a field of a known structure: e1 = e1 + 1 through the
+		   accessors of its class. A postfix operator needs the previous value, which is
+		   the new one minus one for an Int. A postfix operator on a Float keeps the helpers. *)
+		let typed_anon = match inner_expr.eexpr, op with
+			| TField (obj_expr, FAnon cf), (Increment | Decrement) when cs_type_of_type ectx.gctx (follow obj_expr.etype) = CsTypeObject ->
+				begin match anon_field_access ectx.gctx obj_expr.etype cf.cf_name with
+				| Some (_, af) when cs_type_of_type ectx.gctx e.etype = af.af_type
+					&& (af.af_type = CsTypeInt || (af.af_type = CsTypeDouble && not is_postfix)) -> Some obj_expr
+				| _ -> None
+				end
+			| _ -> None
+		in
 		(* For dynamic field access with increment/decrement, use fieldPost/PreIncrement/Decrement helpers.
 		   These helpers return object, so we need to cast to the expected type based on e.etype. *)
-		begin match is_dynamic_field, op with
-		| Some (obj_expr, field_name), Increment ->
+		begin match typed_anon, is_dynamic_field, op with
+		| Some obj_expr, _, _ ->
+			let one = { eexpr = TConst (TInt 1l); etype = ectx.gctx.com.basic.tint; epos = e.epos } in
+			let binop = if op = Increment then OpAdd else OpSub in
+			let undo = if op = Increment then CsOpSub else CsOpAdd in
+			anon_single_eval ectx cs_expr_of_texpr unop_operand inner_expr obj_expr (cs_type_of_type ectx.gctx e.etype) (fun operand ->
+				let value = { operand with eexpr = TBinop (binop, operand, one) } in
+				{ e with eexpr = TBinop (OpAssign, operand, value) }
+			) (fun result ->
+				if is_postfix then CsParens (CsBinop (undo, result, CsConst (CsConstInt 1l))) else result
+			)
+		| None, Some (obj_expr, field_name), Increment ->
 			let helper_name = if is_postfix then "fieldPostIncrement" else "fieldPreIncrement" in
 			let call_expr = CsStaticCall (CsTypeClass ((["cs"], "Cs"), []), helper_name, [cs_expr_of_texpr ectx obj_expr; CsConst (CsConstString field_name)]) in
 			(* The helper returns object, cast to expected type. *)
 			let expected_cs_type = cs_type_of_type ectx.gctx e.etype in
 			cast_object_to_type expected_cs_type call_expr
-		| Some (obj_expr, field_name), Decrement ->
+		| None, Some (obj_expr, field_name), Decrement ->
 			let helper_name = if is_postfix then "fieldPostDecrement" else "fieldPreDecrement" in
 			let call_expr = CsStaticCall (CsTypeClass ((["cs"], "Cs"), []), helper_name, [cs_expr_of_texpr ectx obj_expr; CsConst (CsConstString field_name)]) in
 			(* The helper returns object, cast to expected type. *)
@@ -2525,6 +2625,8 @@ let rec cs_expr_of_texpr ectx e =
 			let obj_expr = cs_expr_of_texpr ectx e in
 			let cs_type = cs_type_of_type ectx.gctx e.etype in
 			begin match cs_type with
+			| CsTypeObject when anon_field_access ectx.gctx e.etype cf.cf_name <> None ->
+				anon_get ectx (Option.get (anon_field_access ectx.gctx e.etype cf.cf_name)) obj_expr function_type
 			| CsTypeObject ->
 				(* Object/anonymous type - use Runtime.getField for dynamic access.
 				   Runtime.getField throws NullReferenceException for null objects. *)
@@ -2627,6 +2729,11 @@ let rec cs_expr_of_texpr ectx e =
 		| CsTypeClass (_, _) ->
 			(* Some other concrete class - try direct access *)
 			CsField (obj_expr, escape_identifier cf.cf_name)
+		| CsTypeObject when anon_field_access ectx.gctx inner_type cf.cf_name <> None ->
+			(* Known structure: the accessor of its class reads the typed field when the
+			   object is an instance of it, and falls back to Runtime.getField otherwise *)
+			let access = Option.get (anon_field_access ectx.gctx inner_type cf.cf_name) in
+			anon_get ectx access obj_expr (cs_type_of_type ectx.gctx cf.cf_type)
 		| CsTypeObject ->
 			(* Object type (from TAnon/structural type) - use Runtime.getField for dynamic access.
 			   Runtime.getField throws NullReferenceException for null objects, matching
@@ -3587,8 +3694,12 @@ let rec cs_expr_of_texpr ectx e =
 			(* Some other concrete class - try direct call *)
 			CsCall (CsField (obj, escape_identifier cf.cf_name), args)
 		| CsTypeObject ->
-			(* Object type (from TAnon/structural type) - use Reflect.field then Runtime.invokeFunctionN *)
-			let field_call = CsStaticCall (reflect_type, "field", [obj; CsConst (CsConstString cf.cf_name)]) in
+			(* Object type (from TAnon/structural type) - read the function, through the accessor
+			   of the structure class if there is one, then Runtime.invokeFunctionN *)
+			let field_call = match anon_field_access ectx.gctx inner_type cf.cf_name with
+				| Some (ac, af) -> CsStaticCall (CsAnon.class_type ac, CsAnon.getter_name af, [obj])
+				| None -> CsStaticCall (reflect_type, "field", [obj; CsConst (CsConstString cf.cf_name)])
+			in
 			let arg_types_cs = List.map (cs_type_of_type ectx.gctx) param_types in
 			let result_type = cs_type_of_type ectx.gctx e.etype in
 			let result_type = CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope result_type in
@@ -4486,6 +4597,22 @@ let rec cs_expr_of_texpr ectx e =
 			in
 			wrap_call_with_prefix prefix_stmts class_type result_expr
 		end
+	| TObjectDecl fields when anon_literal_class ectx.gctx e fields <> None ->
+		(* Known structure: create an instance of its class. The arguments are named so
+		   that the values are evaluated in the order of the source. *)
+		let ac = Option.get (anon_literal_class ectx.gctx e fields) in
+		let args = List.map (fun ((name, _, _), e1) ->
+			let af = Option.get (CsAnon.find_field ac name) in
+			let value = anon_value_to_field ectx af (cs_type_of_type ectx.gctx e1.etype) (cs_expr_of_texpr ectx e1) in
+			CsInlineCode (escape_identifier name ^ ": {0}", [value])
+		) fields in
+		(* fields of the structure the literal does not give, optional ones, are absent *)
+		let absent = List.fold_left (fun mask af ->
+			if List.exists (fun ((name, _, _), _) -> name = af.af_name) fields then mask
+			else Int64.logor mask (Int64.shift_left 1L af.af_index)
+		) 0L ac.ac_fields in
+		let args = if absent = 0L then args else args @ [CsRaw (Printf.sprintf "_hx_absent: %LuUL" absent)] in
+		CsNew (CsAnon.class_type ac, args)
 	| TObjectDecl fields ->
 		(* Create HaxeDynamicObject with initial field values using _hx_create *)
 		if fields = [] then
@@ -10597,12 +10724,26 @@ let generate com =
 		| _ -> ()
 	) com.types;
 
+	(* Give object literals the structure type their context expects *)
+	List.iter (fun mt ->
+		match mt with
+		| TClassDecl c when not (has_class_flag c CExtern) ->
+			List.iter (CsAnon.retype_field gctx) c.cl_ordered_statics;
+			List.iter (CsAnon.retype_field gctx) c.cl_ordered_fields;
+			Option.may (CsAnon.retype_field gctx) c.cl_constructor;
+			c.cl_init <- Option.map (CsAnon.retype_object_decls gctx None) c.cl_init
+		| _ -> ()
+	) com.types;
+
 	(* Generate all types *)
 	List.iter (fun mt ->
 		match generate_type gctx mt with
 		| Some td -> gctx.generated_types <- td :: gctx.generated_types
 		| None -> ()
 	) com.types;
+
+	(* Classes of the anonymous structures the generated code uses *)
+	List.iter (fun td -> gctx.generated_types <- td :: gctx.generated_types) (CsAnon.generate_classes gctx);
 
 	(* Group types by namespace and write files, including closures with their origin class *)
 	let files = List.map (fun td ->

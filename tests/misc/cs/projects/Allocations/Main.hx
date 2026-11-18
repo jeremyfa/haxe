@@ -193,10 +193,26 @@ class Main {
 
 		// ---- structures
 		var p:Point = {x: 1, y: 2};
-		check("structure field read", STRUCT_MAX, () -> sink = readPoint(p));
-		check("structure field write", STRUCT_MAX, () -> writePoint(p));
+		check("structure field read", NONE, () -> sink = readPoint(p));
+		check("structure field write", NONE, () -> writePoint(p));
+		check("structure field compound assignment and increment", NONE, () -> {
+			for (i in 0...N) {
+				p.x += i;
+				p.y++;
+				--p.x;
+			}
+			sink = p.x;
+		});
+		var points:Array<Point> = [p, p];
+		check("structure field compound assignment, object in an array", NONE, () -> {
+			for (i in 0...N) {
+				points[i & 1].x += i;
+				points[i & 1].y++;
+			}
+			sink = p.x;
+		});
 		var o:Options = {name: "o", size: 3};
-		check("structure optional field read", STRUCT_MAX, () -> sink = readOptions(o));
+		check("structure optional field read", NONE, () -> sink = readOptions(o));
 		check("call with haxe.PosInfos", POS_MAX, () -> {
 			var sum = 0;
 			for (i in 0...N)
@@ -229,9 +245,10 @@ class Main {
 
 	static var kept:Point;
 
-	// Allowances for what still allocates, in bytes per iteration
-	static inline var STRUCT_MAX = 100000.0;
-	static inline var POS_MAX = 100000.0;
-	static inline var LITERAL_MAX = 100000.0;
+	// One object and nothing else: no dictionary, no array of values, no boxing
+	static inline var POS_MAX = 96.0;
+	static inline var LITERAL_MAX = 64.0;
+
+	// Allowance for what still allocates, in bytes per iteration
 	static inline var ITERATOR_MAX = 100000.0;
 }
