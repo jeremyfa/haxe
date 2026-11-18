@@ -976,9 +976,6 @@ let run tctx main before_destruction =
 		| Cs ->
 			SetHXGen.run_filter com new_types;
 			filters
-		| Java when not (Common.defined com Jvm)->
-			SetHXGen.run_filter com new_types;
-			filters
 		| _ -> filters
 	in
 	List.iter (run_expression_filters (timer_label detail_times ["expr 1"]) tctx filters) new_types;

@@ -1,1 +1,0 @@
-Warning : (WDeprecated) --java out.jar -D jvm is deprecated; use --jvm out.jar directly

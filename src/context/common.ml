@@ -723,14 +723,6 @@ let get_config com =
 				ec_wildcard_catch = (["java";"lang"],"Throwable");
 				ec_base_throw = (["java";"lang"],"RuntimeException");
 			};
-			pf_scoping =
-				if defined Jvm then
-					default_config.pf_scoping
-				else
-					{
-						vs_scope = FunctionScope;
-						vs_flags = [NoShadowing; ReserveAllTopLevelSymbols; ReserveNames(["_"])];
-					};
 			pf_supports_atomics = true;
 		}
 	| Python ->

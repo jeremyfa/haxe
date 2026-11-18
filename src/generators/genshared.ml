@@ -25,6 +25,23 @@ type 'a path_field_mapping = {
 	pfm_arity : int;
 }
 
+(* replace open TMonos with TDynamic *)
+let rec replace_mono t =
+	match t with
+	| TMono t ->
+		(match t.tm_type with
+		| None -> Monomorph.bind t t_dynamic
+		| Some _ -> ())
+	| TEnum (_,p) | TInst (_,p) | TType (_,p) | TAbstract (_,p) ->
+		List.iter replace_mono p
+	| TFun (args,ret) ->
+		List.iter (fun (_,_,t) -> replace_mono t) args;
+		replace_mono ret
+	| TAnon _
+	| TDynamic _ -> ()
+	| TLazy f ->
+		replace_mono (lazy_type f)
+
 let count_fields pm =
 	PMap.fold (fun _ i -> i + 1) pm 0
 
@@ -153,7 +170,7 @@ object(self)
 			self#identify accept_anons (lazy_type f)
 		| TAnon an when accept_anons && not (PMap.is_empty an.a_fields) ->
 			let arity = PMap.fold (fun cf i ->
-				Gencommon.replace_mono cf.cf_type;
+				replace_mono cf.cf_type;
 				i + 1
 			) an.a_fields 0 in
 			begin try

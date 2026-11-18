@@ -325,8 +325,7 @@ let reduce_control_flow com e = match e.eexpr with
 	| TCast(e1,None) ->
 		(* TODO: figure out what's wrong with these targets *)
 		let require_cast = match com.platform with
-			| Cpp | Flash -> true
-			| Java -> defined com Define.Jvm
+			| Cpp | Flash | Java -> true
 			| Cs -> defined com Define.EraseGenerics || defined com Define.FastCast
 			| _ -> false
 		in

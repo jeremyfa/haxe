@@ -69,7 +69,7 @@ class ServerTests extends TestCase {
 
 	function testDceEmpty() {
 		vfs.putContent("Empty.hx", getTemplate("Empty.hx"));
-		var args = ["-main", "Empty", "--no-output", "-java", "java"];
+		var args = ["-main", "Empty", "--no-output", "--jvm", "java.jar"];
 		runHaxe(args);
 		runHaxeJson(args, cast "typer/compiledTypes" /* TODO */, {});
 		assertHasField("", "Type", "enumIndex", true);

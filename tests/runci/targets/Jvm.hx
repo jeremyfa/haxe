@@ -4,9 +4,16 @@ import runci.System.*;
 import runci.Config.*;
 
 class Jvm {
+	static final miscJavaDir = getMiscSubDir('java');
+
+	static public function getJavaDependencies() {
+		haxelibInstallGit("HaxeFoundation", "hxjava", true);
+		runCommand("javac", ["-version"]);
+	}
+
 	static public function run(args:Array<String>) {
 		deleteDirectoryRecursively("bin/jvm");
-		Java.getJavaDependencies();
+		getJavaDependencies();
 
 		for (level in 0...3) {
 			final args = args.concat(["-D", "jvm.dynamic-level=" + level]);
@@ -16,6 +23,9 @@ class Jvm {
 			runCommand("haxe", ["compile-jvm.hxml","-dce","no"].concat(args));
 			runCommand("java", ["-jar", "bin/unit.jar"]);
 		}
+
+		changeDirectory(miscJavaDir);
+		runCommand("haxe", ["run.hxml"]);
 
 		changeDirectory(sysDir);
 		runCommand("haxe", ["compile-jvm.hxml"].concat(args));

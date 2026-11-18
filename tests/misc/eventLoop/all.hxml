@@ -12,7 +12,7 @@
 --next
 -php php
 --next
--java java
+--jvm java.jar
 --next
 -cs cs
 --next

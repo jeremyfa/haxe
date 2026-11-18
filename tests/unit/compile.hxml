@@ -4,10 +4,6 @@
 --next
 compile-exe-runner.hxml
 
-# java-runner
---next
-compile-java-runner.hxml
-
 
 # targets
 
@@ -18,7 +14,6 @@ compile-java-runner.hxml
 --next compile-neko.hxml
 --next compile-php.hxml
 --next compile-cpp.hxml
---next compile-java.hxml
 --next compile-cs.hxml
 --next compile-python.hxml
 --next compile-cs-unsafe.hxml

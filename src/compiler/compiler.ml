@@ -127,12 +127,18 @@ module Setup = struct
 				Dotnet.before_generate com;
 				add_std "cs"; "cs"
 			| Java ->
-				Java.before_generate com;
-				if defined com Define.Jvm then begin
-					if not actx.jvm_flag then com.warning WDeprecated com.warning_options ("--java out.jar -D jvm is deprecated; use --jvm out.jar directly") null_pos;
-					add_std "jvm";
-					com.package_rules <- PMap.remove "jvm" com.package_rules;
-				end;
+				(* java_ver and java0..N: still read by std/java/_std/Sys.hx *)
+				let java_ver = try
+					int_of_string (Common.defined_value com Define.JavaVer)
+				with Not_found ->
+					Common.define_value com Define.JavaVer "7";
+					7
+				in
+				for i = 0 to java_ver do
+					Common.raw_define com ("java" ^ (string_of_int i))
+				done;
+				add_std "jvm";
+				com.package_rules <- PMap.remove "jvm" com.package_rules;
 				add_std "java";
 				"java"
 			| Python ->
@@ -583,7 +589,7 @@ module HighLevel = struct
 				List.iter (fun l -> Hashtbl.add added_libs l ()) libs;
 				let lines = add_libs libs pl server_api.cache has_display in
 				loop acc (lines @ args)
-			| ("--jvm" | "--java" | "-java" as arg) :: dir :: args ->
+			| ("--jvm" as arg) :: dir :: args ->
 				loop_lib arg dir "hxjava" acc args
 			| ("--cs" | "-cs" as arg) :: dir :: args ->
 				loop_lib arg dir "hxcs" acc args

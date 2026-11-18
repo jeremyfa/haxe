@@ -84,9 +84,9 @@ let parse_args com =
 		("Target",["--cs"],["-cs"],Arg.String (fun dir ->
 			set_platform com Cs dir;
 		),"<directory>","generate C# code into target directory");
-		("Target",["--java"],["-java"],Arg.String (fun dir ->
-			set_platform com Java dir;
-		),"<directory>","generate Java code into target directory");
+		("Target",["--java"],["-java"],Arg.String (fun _ ->
+			raise (Arg.Bad "The Java source target was removed: use --jvm <file.jar> to generate JVM bytecode")
+		),"<directory>","removed, use --jvm");
 		("Target",["--jvm"],[],Arg.String (fun dir ->
 			Common.define com Define.Jvm;
 			actx.jvm_flag <- true;
