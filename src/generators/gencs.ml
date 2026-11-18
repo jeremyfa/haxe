@@ -7969,14 +7969,23 @@ let collect_inherited_field_assigns c body_expr =
 	| Some e when is_inherited_field_assign e -> [e]
 	| _ -> []
 
-(* Check if a parent class constructor needs two-phase construction *)
-let parent_needs_two_phase_construction c =
+(* The constructor a class without constructor inherits: the one of its closest
+   ancestor that declares one. The classes in between have no constructor either and
+   get the same forwarding constructors, so each level can call its base with the
+   same arguments. *)
+let rec inherited_constructor c =
 	match c.cl_super with
 	| Some (sc, _) ->
 		begin match sc.cl_constructor with
-		| Some ctor_cf -> needs_two_phase_construction ctor_cf
-		| None -> false
+		| Some ctor_cf -> Some ctor_cf
+		| None -> inherited_constructor sc
 		end
+	| None -> None
+
+(* Check if a parent class constructor needs two-phase construction *)
+let parent_needs_two_phase_construction c =
+	match inherited_constructor c with
+	| Some ctor_cf -> needs_two_phase_construction ctor_cf
 	| None -> false
 
 (* Generate constructor - follows legacy C# target pattern *)
@@ -8935,12 +8944,8 @@ let generate_static_field_accessors gctx c =
 			(args, is_two_phase)
 		| None ->
 			(* No explicit constructor — check parent for forwarding constructor args *)
-			let parent_args = match c.cl_super with
-				| Some (sc, _) ->
-					begin match sc.cl_constructor with
-					| Some ctor_cf -> (match follow_tfun_with_coro gctx.com.basic ctor_cf.cf_type with Some (args, _) -> args | None -> [])
-					| None -> []
-					end
+			let parent_args = match inherited_constructor c with
+				| Some ctor_cf -> (match follow_tfun_with_coro gctx.com.basic ctor_cf.cf_type with Some (args, _) -> args | None -> [])
 				| None -> []
 			in
 			(parent_args, false)  (* Forwarding ctors are never two-phase from the factory's perspective *)
@@ -9538,17 +9543,13 @@ let generate_class gctx c =
 		   This now also covers Issue3596: if parent's constructor calls virtual methods,
 		   it will be marked two-phase, and we inherit that here. *)
 		let parent_is_two_phase = parent_needs_two_phase_construction c in
-		let parent_ctor_signatures = match c.cl_super with
-			| Some (sc, _) ->
-				begin match sc.cl_constructor with
-				| Some ctor_cf ->
-					(* Get the main constructor signature *)
-					let main_args = get_ctor_args_from_cf ctor_cf in
-					(* Also get overload signatures *)
-					let overload_args = List.flatten (List.map get_ctor_args_from_cf ctor_cf.cf_overloads) in
-					main_args @ overload_args
-				| None -> []
-				end
+		let parent_ctor_signatures = match inherited_constructor c with
+			| Some ctor_cf ->
+				(* Get the main constructor signature *)
+				let main_args = get_ctor_args_from_cf ctor_cf in
+				(* Also get overload signatures *)
+				let overload_args = List.flatten (List.map get_ctor_args_from_cf ctor_cf.cf_overloads) in
+				main_args @ overload_args
 			| None -> []
 		in
 		(* Generate a forwarding constructor for each parent constructor signature *)
