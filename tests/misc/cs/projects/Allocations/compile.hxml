@@ -1,0 +1,5 @@
+-main Main
+-cs bin
+-lib hxcs
+--cmd dotnet build bin/Project.csproj -c Release -nodeReuse:false -p:UseSharedCompilation=false
+--cmd dotnet run --no-build -c Release --project bin/Project.csproj

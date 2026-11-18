@@ -155,6 +155,15 @@ class Cs {
 		changeDirectory(miscCsDir);
 		runCommand("haxe", ["run.hxml"]);
 
+		// === Allocation checks with NativeAOT (the misc run above does them in JIT) ===
+		changeDirectory(miscCsDir);
+		deleteDirectoryRecursively("projects/Allocations/bin");
+		changeDirectory("projects/Allocations");
+		runCommand("haxe", ["-main", "Main", "-cs", "bin", "-lib", "hxcs", "-D", "cs.aot", "-D", "cs.closure-cache"].concat(args));
+		changeDirectory("bin");
+		infoMsg("=== Running Allocation Checks (AOT) ===");
+		runAotTest();
+
 		// === Sys Tests ===
 		// JIT
 		changeDirectory(sysDir);
