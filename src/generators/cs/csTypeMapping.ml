@@ -216,8 +216,14 @@ let make_array_from_native storage_type native_array_expr _target_cs_type =
    - cs.* namespaces (Haxe externs for C#)
    - haxe.lang.Null (C# struct wrapper for nullable values)
    All other classes are Haxe classes and should have type params erased. *)
+(* Paths of the types loaded from .NET libraries (--net-lib, the .NET std), filled by
+   Gencs.generate: they keep their C# type parameters and their own namespace, even
+   when it is empty (a type without namespace is not in haxe.root). *)
+let net_lib_types : (Globals.path, unit) Hashtbl.t = Hashtbl.create 0
+
 let is_cs_native_generic_class path =
 	match path with
+	| _ when Hashtbl.mem net_lib_types path -> true
 	| (("System" :: _), _) -> true  (* System.Collections.Generic.Dictionary, etc. *)
 	| (("cs" :: _), _) -> true  (* cs.NativeArray, cs.system.*, etc. *)
 	| ((["haxe"; "lang"], "Null")) -> true  (* Null<T> struct *)
@@ -288,6 +294,7 @@ let get_unboxed_type = function
 (* Convert Haxe path to C# path *)
 let cs_path_of_path (pack, name) =
 	let pack = match pack with
+		| [] when Hashtbl.mem net_lib_types (pack, name) -> []  (* .NET type without namespace *)
 		| [] -> ["haxe"; "root"]  (* Default namespace for unpackaged types *)
 		| _ -> pack
 	in
@@ -295,6 +302,13 @@ let cs_path_of_path (pack, name) =
 
 (* Main type conversion: Haxe type to C# type
    Uses a stack parameter to detect and break cycles, following JVM's approach *)
+(* C# modifier of a parameter declared as cs.Ref<T> or cs.Out<T> *)
+let param_modifier_of_type t =
+	match Type.follow t with
+	| TAbstract ({ a_path = (["cs"], "Ref") }, [_]) -> Some CsParamRef
+	| TAbstract ({ a_path = (["cs"], "Out") }, [_]) -> Some CsParamOut
+	| _ -> None
+
 let rec cs_type_of_type_inner gctx stack t =
 	let open Type in
 	(* Check for recursive types - if we've already seen this type, return object to break cycle *)
@@ -312,6 +326,10 @@ let rec cs_type_of_type_inner gctx stack t =
 		CsTypeDouble
 	| TAbstract ({ a_path = ([], "Single") }, _) ->
 		CsTypeFloat
+	| TAbstract ({ a_path = (["cs"], ("Ref" | "Out")) }, [t]) ->
+		(* ref/out parameters: the type is the referenced one, the modifier is on the
+		   parameter (see param_modifier_of_type) and the argument (ref x / out x) *)
+		cs_type_of_type_inner t
 	| TInst ({ cl_path = pack, name }, _) when (pack = [] || pack = ["haxe"; "root"]) && (name = "String" || name = "string") ->
 		(* Due to @:native, the usual String path doesn't always match - also match lowercase "string" from @:native *)
 		CsTypeString
@@ -438,6 +456,7 @@ let rec cs_type_of_type_inner gctx stack t =
 		| ([], "UInt8") | (["cs"], "UInt8") -> CsTypeByte
 		| ([], "Int16") | (["cs"], "Int16") -> CsTypeShort
 		| ([], "UInt16") | (["cs"], "UInt16") -> CsTypeUShort
+		| (["cs"], "Char16") -> CsTypeChar
 		| ([], "Dynamic") ->
 			(* Dynamic -> object in C# *)
 			CsTypeObject

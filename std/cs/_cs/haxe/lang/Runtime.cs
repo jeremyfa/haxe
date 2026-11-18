@@ -736,6 +736,12 @@ namespace haxe.lang
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
             if (prop != null) return prop.GetValue(obj);
 
+            // Try method (e.g. the get_Item accessor of an indexer)
+            var methods = global::System.Array.FindAll(
+                type.GetMethods(global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance),
+                m => m.Name == name);
+            if (methods.Length > 0) return new NativeMethodFunction(obj, methods);
+
             return null;
         }
 
@@ -950,6 +956,43 @@ namespace haxe.lang
                 case 9: return str;
                 default: return null;
             }
+        }
+    }
+
+    /// <summary>
+    /// A method of a .NET object (not a Haxe object) read through Dynamic, called with
+    /// .NET reflection. The overload is chosen by the number of arguments.
+    /// </summary>
+    internal sealed class NativeMethodFunction : Function
+    {
+        readonly object target;
+        readonly global::System.Reflection.MethodInfo[] methods;
+
+        public NativeMethodFunction(object target, global::System.Reflection.MethodInfo[] methods)
+        {
+            this.target = target;
+            this.methods = methods;
+        }
+
+        public override object invokeDynamic(global::haxe.root.Array args)
+        {
+            int count = args == null ? 0 : args.length;
+            foreach (var method in methods)
+            {
+                var parameters = method.GetParameters();
+                if (parameters.Length != count) continue;
+                var values = new object[count];
+                for (int i = 0; i < count; i++)
+                {
+                    object value = args.__get(i);
+                    var type = parameters[i].ParameterType;
+                    if (value != null && !type.IsInstanceOfType(value) && value is global::System.IConvertible)
+                        value = global::System.Convert.ChangeType(value, type);
+                    values[i] = value;
+                }
+                return method.Invoke(target, values);
+            }
+            throw new global::System.MissingMethodException(target.GetType().FullName, methods[0].Name);
         }
     }
 }

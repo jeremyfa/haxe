@@ -286,6 +286,8 @@ and print_expr ctx = function
 		   E.g., !(a != b) should be "!(a != b)" not "!a != b" *)
 		let needs_parens = match e with
 			| CsBinop _ | CsTernary _ -> true
+			(* inline code (cs.Syntax.code) can be any expression, e.g. "{0} is T" *)
+			| CsInlineCode _ | CsRaw _ -> true
 			| _ -> false
 		in
 		if is_postfix then begin
@@ -309,6 +311,8 @@ and print_expr ctx = function
 		   precedence than member access (.) in C#. *)
 		let needs_parens = match e with
 			| CsTernary _ | CsBinop _ | CsLambda _ -> true
+			(* inline code (cs.Syntax.code) can be any expression, e.g. "{0} as T" *)
+			| CsInlineCode _ | CsRaw _ -> true
 			| _ -> false
 		in
 		if needs_parens then print ctx "(";
@@ -1256,5 +1260,15 @@ let generate_csproj proj =
 	Buffer.add_string b "    <Nullable>disable</Nullable>\n";
 	Buffer.add_string b "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n";
 	Buffer.add_string b "  </PropertyGroup>\n";
+	if proj.proj_references <> [] then begin
+		Buffer.add_string b "  <ItemGroup>\n";
+		List.iter (fun (name, path) ->
+			Buffer.add_string b (Printf.sprintf "    <Reference Include=\"%s\">\n      <HintPath>%s</HintPath>\n    </Reference>\n" name path);
+			(* Dynamic access to the members of these libraries uses .NET reflection:
+			   keep them whole when the build is trimmed (NativeAOT) *)
+			Buffer.add_string b (Printf.sprintf "    <TrimmerRootAssembly Include=\"%s\" />\n" name)
+		) proj.proj_references;
+		Buffer.add_string b "  </ItemGroup>\n";
+	end;
 	Buffer.add_string b "</Project>\n";
 	Buffer.contents b

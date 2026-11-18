@@ -499,8 +499,9 @@ let sread_real_i32 s pos =
 	pos+4, (Int32.logor n4 n)
 
 let sread_i64 s pos =
-	let pos, v1 = sread_real_i32 s (pos+1) in
-	let v1 = Int64.of_int32 v1 in
+	(* little endian: the low 32 bits first, without sign extension *)
+	let pos, v1 = sread_real_i32 s pos in
+	let v1 = Int64.logand (Int64.of_int32 v1) 0xFFFFFFFFL in
 	let pos, v2 = sread_real_i32 s pos in
 	let v2 = Int64.of_int32 v2 in
 	let v2 = Int64.shift_left v2 32 in

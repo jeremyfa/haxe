@@ -1160,9 +1160,64 @@ let get_type_param_constraint t =
 
 (* ====== Expression translation ====== *)
 
+(* Arguments passed to ref/out parameters (cs.Ref<T> / cs.Out<T>, e.g. the out
+   parameter of Dictionary.TryGetValue) are wrapped in a __cs_ref__ / __cs_out__ marker
+   call, which is generated as `ref x` / `out x`. Returns None when there is nothing to
+   mark (or the arguments are already marked). *)
+let mark_ref_out_args callee el =
+	match follow callee.etype with
+	| TFun (args, _) ->
+		let changed = ref false in
+		let rec loop args el = match args, el with
+			| (_, _, t) :: args, e :: el ->
+				let e = match CsTypeMapping.param_modifier_of_type t, e.eexpr with
+					| _, TCall ({ eexpr = TIdent ("__cs_ref__" | "__cs_out__") }, _) -> e
+					| Some modifier, _ ->
+						changed := true;
+						let name = if modifier = CsParamOut then "__cs_out__" else "__cs_ref__" in
+						{ e with eexpr = TCall ({ e with eexpr = TIdent name }, [e]) }
+					| None, _ -> e
+				in
+				e :: loop args el
+			| _, el -> el
+		in
+		let el = loop args el in
+		if !changed then Some el else None
+	| _ -> None
+
+(* A method with ref/out parameters cannot be called through reflection (the arguments
+   of a dynamic call are values): it is left out of the reflection accessors, as if it
+   was @:unreflective. *)
+let has_ref_out_args cf =
+	match follow cf.cf_type with
+	| TFun (args, _) -> List.exists (fun (_, _, t) -> CsTypeMapping.param_modifier_of_type t <> None) args
+	| _ -> false
+
 (* Convert Haxe expression to C# expression - mutually recursive with cs_stmt_of_texpr *)
 let rec cs_expr_of_texpr ectx e =
 	match e.eexpr with
+	| TCall (callee, el) when (match callee.eexpr with TIdent _ -> false | _ -> true) && mark_ref_out_args callee el <> None ->
+		cs_expr_of_texpr ectx { e with eexpr = TCall (callee, Option.get (mark_ref_out_args callee el)) }
+	| TCall ({ eexpr = TField (obj, FInstance (c, _, { cf_name = ("get_Item" | "set_Item") as name })) }, args)
+		when Hashtbl.mem CsTypeMapping.net_lib_types c.cl_path && args <> [] && (name = "get_Item" || List.length args >= 2) ->
+		(* Indexer of a .NET type: C# does not allow calling its accessors, use obj[i, j]
+		   (and obj[i, j] = v for set_Item, whose last argument is the value) *)
+		let cs_obj = cs_expr_of_texpr ectx obj in
+		let cs_args = List.map (cs_expr_of_texpr ectx) args in
+		let placeholders l = String.concat ", " (List.mapi (fun i _ -> Printf.sprintf "{%d}" (i + 1)) l) in
+		if name = "get_Item" then
+			CsInlineCode ("{0}[" ^ placeholders cs_args ^ "]", cs_obj :: cs_args)
+		else begin
+			let indices = List.rev (List.tl (List.rev cs_args)) in
+			let value_index = List.length cs_args in
+			CsInlineCode (Printf.sprintf "({0}[%s] = {%d})" (placeholders indices) value_index, cs_obj :: cs_args)
+		end
+	| TCall ({ eexpr = TIdent ("__cs_ref__" | "__cs_out__" as marker) }, [arg]) ->
+		let rec skip e = match e.eexpr with
+			| TParenthesis e | TMeta (_, e) | TCast (e, None) -> skip e
+			| _ -> e
+		in
+		CsInlineCode ((if marker = "__cs_out__" then "out {0}" else "ref {0}"), [cs_expr_of_texpr ectx (skip arg)])
 	| TConst TNull ->
 		(* For Null<T> types, generic type params, and value types, generate default(T) instead of null.
 		   Value types (primitives) can't be null in C#, so we use default(T) which is 0/false/etc.
@@ -5045,24 +5100,33 @@ let rec cs_expr_of_texpr ectx e =
 		| _ ->
 			(* Also check if expression is Null<EnumType> - need to unwrap via .value *)
 			let is_null_wrapper = find_null_in_expr e in
-			let is_extern_enum, is_dynamic = match follow e.etype with
-				| TEnum (en, _) -> en.e_extern, false
+			let extern_enum, is_dynamic = match follow e.etype with
+				| TEnum (en, _) when en.e_extern -> Some en, false
 				| TAbstract ({ a_path = ([], "Null") }, [t]) ->
 					(* Null<EnumType> - check inner type *)
 					begin match follow t with
-					| TEnum (en, _) -> en.e_extern, false
-					| TDynamic _ -> false, true
-					| _ -> false, false
+					| TEnum (en, _) when en.e_extern -> Some en, false
+					| TDynamic _ -> None, true
+					| _ -> None, false
 					end
-				| TDynamic _ -> false, true
-				| _ -> false, false
+				| TDynamic _ -> None, true
+				| _ -> None, false
 			in
 			let obj = cs_expr_of_texpr ectx e in
 			(* Unwrap Null<T> to get the value before accessing enum index *)
 			let obj = if is_null_wrapper then CsField (obj, "value") else obj in
-			if is_extern_enum then
-				CsCast (CsTypeInt, obj)
-			else if is_dynamic then
+			match extern_enum with
+			| Some en ->
+				(* C# enum: the index of a constructor is its position in the extern enum,
+				   not the value of the C# member (e.g. TVA = 0x100), so map the values *)
+				let enum_type = s_cs_type (cs_type_of_type ectx.gctx (TEnum (en, []))) in
+				let arms = List.map (fun name ->
+					let ef = PMap.find name en.e_constrs in
+					Printf.sprintf "%s.%s => %d" enum_type (escape_identifier ef.ef_name) ef.ef_index
+				) en.e_names in
+				CsInlineCode ("({0} switch { " ^ String.concat ", " (arms @ ["_ => -1"]) ^ " })", [obj])
+			| None ->
+			if is_dynamic then
 				(* Dynamic type - cast to HaxeEnum and access _hx_index directly.
 				   This avoids Reflect.field which doesn't work for HaxeEnum types
 				   because HaxeEnum doesn't extend HaxeObject. *)
@@ -7166,7 +7230,7 @@ let generate_explicit_interface_impls gctx c cf =
 					p_name = escape_identifier n;
 					p_type = Some (cs_type_of_type gctx t);
 					p_default = None;
-					p_modifier = None;
+					p_modifier = CsTypeMapping.param_modifier_of_type t;
 				}
 			) int_args in
 			(* Generate argument expressions with casts from interface type to impl type.
@@ -7311,7 +7375,7 @@ let generate_contravariant_override_overload gctx c cf =
 					p_name = escape_identifier n;
 					p_type = Some (cs_type_of_type gctx t);
 					p_default = None;  (* No defaults for overloads *)
-					p_modifier = None;
+					p_modifier = CsTypeMapping.param_modifier_of_type t;
 				}) filtered_args in
 				let param_cs_names = List.map (fun (n, _, _) -> escape_identifier n) filtered_args in
 				let class_type_params = List.map (fun ttp -> ttp.ttp_name) c.cl_params in
@@ -7632,7 +7696,7 @@ let generate_field gctx c cf is_static =
 				p_name = escape_identifier n;
 				p_type = Some param_type;
 				p_default = default_val;
-				p_modifier = None;
+				p_modifier = CsTypeMapping.param_modifier_of_type t;
 			}
 		) filtered_args in
 		(* Deduplicate parameter names — C# doesn't allow duplicate param names.
@@ -7944,7 +8008,7 @@ let generate_constructor gctx c cf field_init_stmts =
 			p_name = escape_identifier n;
 			p_type = Some param_type;
 			p_default = default_val;
-			p_modifier = None;
+			p_modifier = CsTypeMapping.param_modifier_of_type t;
 		}
 	) args in
 
@@ -8531,7 +8595,8 @@ let generate_field_accessors gctx c =
 		let instance_methods = List.filter_map (fun cf ->
 			match cf.cf_kind with
 			| Method (MethNormal | MethInline) when not (has_class_field_flag cf CfStatic)
-			                                     && not (Meta.has Meta.Unreflective cf.cf_meta) ->
+			                                     && not (Meta.has Meta.Unreflective cf.cf_meta)
+			                                     && not (has_ref_out_args cf) ->
 				let args, ret = match follow_tfun_with_coro gctx.com.basic cf.cf_type with
 					| Some (args, ret) -> args, ret
 					| None -> [], t_dynamic
@@ -8795,7 +8860,7 @@ let generate_static_field_accessors gctx c =
 	   Exclude methods marked @:unreflective. *)
 	let static_methods = List.filter_map (fun cf ->
 		match cf.cf_kind with
-		| Method (MethNormal | MethInline) when not (Meta.has Meta.Unreflective cf.cf_meta) ->
+		| Method (MethNormal | MethInline) when not (Meta.has Meta.Unreflective cf.cf_meta) && not (has_ref_out_args cf) ->
 			let args, ret = match follow_tfun_with_coro gctx.com.basic cf.cf_type with
 				| Some (args, ret) -> args, ret
 				| None -> [], t_dynamic
@@ -8833,7 +8898,8 @@ let generate_static_field_accessors gctx c =
 		let instance_method_names = List.filter_map (fun cf ->
 			match cf.cf_kind with
 			| Method (MethNormal | MethInline) when not (has_class_field_flag cf CfStatic)
-			                                     && not (Meta.has Meta.Unreflective cf.cf_meta) -> Some cf.cf_name
+			                                     && not (Meta.has Meta.Unreflective cf.cf_meta)
+			                                     && not (has_ref_out_args cf) -> Some cf.cf_name
 			| _ -> None
 		) c.cl_ordered_fields in
 		instance_data_names @ instance_property_names @ instance_method_names
@@ -9709,7 +9775,7 @@ let generate_interface gctx c =
 					p_name = escape_identifier n;
 					p_type = Some (cs_type_of_type gctx t);
 					p_default = None;
-					p_modifier = None;
+					p_modifier = CsTypeMapping.param_modifier_of_type t;
 				}
 			) args in
 			(* Get method-level type parameters - only for C# native interfaces.
@@ -10405,6 +10471,12 @@ let cs_type_of_type_for_preprocessor t =
 (* Main generation entry point *)
 let generate com =
 	let gctx = create_context com in
+	Hashtbl.reset CsTypeMapping.net_lib_types;
+	List.iter (function
+		| TClassDecl c when Meta.has Meta.LibType c.cl_meta -> Hashtbl.replace CsTypeMapping.net_lib_types c.cl_path ()
+		| TEnumDecl e when Meta.has Meta.LibType e.e_meta -> Hashtbl.replace CsTypeMapping.net_lib_types e.e_path ()
+		| _ -> ()
+	) com.types;
 
 	(* Initialize the preprocessor for this-before-super detection *)
 	gctx.preprocessor <- new preprocessor com.basic cs_type_of_type_for_preprocessor;
@@ -10609,10 +10681,22 @@ public static class HaxeReflectionInit
 	let target_framework =
 		Common.defined_value_safe ~default:"net8.0" com DefineList.CsNetFramework
 	in
+	(* The .dll given with --net-lib are referenced by the project, so that the program
+	   can use them at run time. The .NET std (found by CsLib.maybe_load_net_std) is
+	   provided by the target framework, and --net-lib-extern only types against a
+	   library. *)
+	let references = List.rev (List.filter_map (fun lib ->
+		if lib#has_flag NativeLibraries.FlagIsStd || lib#has_flag NativeLibraries.FlagIsExtern then None
+		else begin
+			let path = Path.get_full_path lib#get_file_path in
+			Some (Filename.remove_extension (Filename.basename path), path)
+		end
+	) com.native_libs.net_libs) in
 	let proj = {
 		proj_name = "HaxeProject";
 		proj_target_framework = target_framework;
 		proj_output_type = "Exe";
+		proj_references = references;
 	} in
 	write_file com.file "Project.csproj" (generate_csproj proj);
 

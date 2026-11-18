@@ -356,4 +356,5 @@ type cs_project = {
 	proj_name : string;
 	proj_target_framework : string;
 	proj_output_type : string;  (* Exe, Library *)
+	proj_references : (string * string) list;  (* assembly name, path of the .dll *)
 }

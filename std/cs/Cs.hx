@@ -349,7 +349,10 @@ class Cs {
 		if (Std.isOfType(obj, Array)) {
 			return (cast obj : Array<Dynamic>)[index];
 		}
-		// Fallback: throw - we can't handle other indexable types without reflection
+		// .NET object with an indexer taking an int (this[int], named Item)
+		var item:Dynamic = indexerOf(obj);
+		if (item != null)
+			return cs.Syntax.code("((global::System.Reflection.PropertyInfo){0}).GetValue({1}, new object[] { {2} })", item, obj, index);
 		throw "Cannot index object of type " + Type.getClassName(Type.getClass(obj));
 	}
 
@@ -370,8 +373,21 @@ class Cs {
 			(cast obj : Array<Dynamic>)[index] = value;
 			return value;
 		}
-		// Fallback: throw - we can't handle other indexable types without reflection
+		// .NET object with an indexer taking an int (this[int], named Item)
+		var item:Dynamic = indexerOf(obj);
+		if (item != null) {
+			cs.Syntax.code("((global::System.Reflection.PropertyInfo){0}).SetValue({1}, {2}, new object[] { {3} })", item, obj, value, index);
+			return value;
+		}
 		throw "Cannot set index on object of type " + Type.getClassName(Type.getClass(obj));
+	}
+
+	/**
+	 * The indexer of a .NET object that takes a single int (this[int]), or null.
+	 * Uses .NET reflection: the indexer must not be trimmed in AOT builds.
+	 */
+	static function indexerOf(obj:Dynamic):Dynamic {
+		return cs.Syntax.code("((object){0}).GetType().GetProperty(\"Item\", new global::System.Type[] { typeof(int) })", obj);
 	}
 
 	// =====================================================================

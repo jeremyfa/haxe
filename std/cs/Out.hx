@@ -26,4 +26,5 @@ package cs;
  * Represents a C# `out` parameter. Used in extern declarations to indicate
  * that a parameter is an output-only reference parameter.
  */
+@:semantics(reference)
 @:coreType extern abstract Out<T> from T to T {}

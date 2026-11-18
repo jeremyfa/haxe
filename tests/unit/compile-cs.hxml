@@ -1,4 +1,10 @@
+# native library used by the C# tests (TestCSharp)
+-cmd "dotnet build native_cs/native_cs.csproj -c Release -o native_cs/bin"
+
+--next
+
 compile-each.hxml
 --main unit.TestMain
 -cs bin/cs
 -lib hxcs
+--net-lib native_cs/bin/native_cs.dll

@@ -82,7 +82,7 @@ function main() {
 		#if !no_pattern_matching
 		new TestMatch(),
 		#end
-		#if (cs && TODO_TestCSharp)
+		#if cs
 		new TestCSharp(),
 		#end
 		#if java

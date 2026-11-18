@@ -26,4 +26,5 @@ package cs;
  * Represents a C# `ref` parameter. Used in extern declarations to indicate
  * that a parameter is passed by reference.
  */
+@:semantics(reference)
 @:coreType extern abstract Ref<T> from T to T {}

@@ -60,6 +60,8 @@ class Type {
 		// Check if it's an enum value by checking for _hx_index
 		if (!isEnumValue(o))
 			return null;
+		if (isNativeEnumValue(o))
+			return cs.Syntax.code("((object){0}).GetType()", o);
 		// Get the base type (the enum type is the superclass)
 		return cs.Syntax.code("((object){0}).GetType().BaseType", o);
 	}
@@ -158,6 +160,13 @@ class Type {
 	public static function createEnum<T>(e:Enum<T>, constr:String, ?params:Array<Dynamic>):T {
 		if (e == null)
 			return null;
+		if (isNativeEnum(e)) {
+			if (params != null && params.length > 0)
+				throw "Invalid number of arguments for " + constr;
+			if (nativeEnumConstructs(e).indexOf(constr) < 0)
+				throw "Invalid constructor " + constr;
+			return cs.Syntax.code("global::System.Enum.Parse((global::System.Type){0}, {1})", e, constr);
+		}
 
 		// Use AOT-safe registry: _hx_getEnumConstructor returns either:
 		// - The singleton enum value directly (for parameterless constructors)
@@ -287,6 +296,8 @@ class Type {
 	public static function getEnumConstructs(e:Enum<Dynamic>):Array<String> {
 		if (e == null)
 			return [];
+		if (isNativeEnum(e))
+			return nativeEnumConstructs(e);
 
 		// Try registry first (AOT-safe, correct declaration order)
 		var names:cs.NativeArray<String> = cs.Syntax.code("global::haxe.lang.HaxeReflection.getEnumConstructs((global::System.Type){0})", e);
@@ -388,6 +399,8 @@ class Type {
 	public static function enumConstructor(e:EnumValue):String {
 		if (e == null)
 			return null;
+		if (isNativeEnumValue(e))
+			return cs.Syntax.code("global::System.Enum.GetName(((object){0}).GetType(), {0})", e);
 		// Get the class name which is the constructor name
 		var name:String = cs.Syntax.code("((object){0}).GetType().Name", e);
 		// Strip _Impl_ suffix for singleton enum constructors
@@ -420,6 +433,8 @@ class Type {
 		if (cs.Syntax.code("{0} is global::haxe.lang.HaxeEnum", e)) {
 			return cs.Syntax.code("((global::haxe.lang.HaxeEnum){0})._hx_getIndex()", e);
 		}
+		if (isNativeEnumValue(e))
+			return nativeEnumConstructs(cs.Syntax.code("((object){0}).GetType()", e)).indexOf(enumConstructor(e));
 		// Fallback: reflection for non-Haxe enums
 		var nativeType:Dynamic = cs.Syntax.code("((object){0}).GetType()", e);
 		var indexField:Dynamic = cs.Syntax.code(
@@ -449,6 +464,33 @@ class Type {
 		if (v == null)
 			return false;
 		// AOT-safe: check if object is an instance of HaxeEnum base class
-		return cs.Syntax.code("{0} is global::haxe.lang.HaxeEnum", v);
+		return cs.Syntax.code("{0} is global::haxe.lang.HaxeEnum", v) || isNativeEnumValue(v);
+	}
+
+	/*
+		.NET enums (from --net-lib): their constructors are the public static fields of
+		the enum type, sorted by value (stable for equal values), like the constructors
+		of the extern enum built by the compiler, so the indexes match the ones it inlines.
+	*/
+	private static inline function isNativeEnumValue(v:Dynamic):Bool {
+		return (cs.Syntax.code("{0} is global::System.Enum", v) : Bool);
+	}
+
+	private static inline function isNativeEnum(e:Dynamic):Bool {
+		return (cs.Syntax.code("{0} is global::System.Type t && t.IsEnum", e) : Bool);
+	}
+
+	private static function nativeEnumConstructs(e:Dynamic):Array<String> {
+		var fields:cs.NativeArray<Dynamic> = cs.Syntax.code("((global::System.Type){0}).GetFields(global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Static)", e);
+		var entries:Array<{name:String, value:Float}> = [];
+		for (i in 0...fields.length) {
+			entries.push({
+				name: (cs.Syntax.code("((global::System.Reflection.FieldInfo){0}).Name", fields[i]) : String),
+				value: (cs.Syntax.code("global::System.Convert.ToDouble(((global::System.Reflection.FieldInfo){0}).GetRawConstantValue())", fields[i]) : Float)
+			});
+		}
+		// stable sort: equal values keep the declaration order
+		haxe.ds.ArraySort.sort(entries, (a, b) -> a.value < b.value ? -1 : (a.value > b.value ? 1 : 0));
+		return [for (entry in entries) entry.name];
 	}
 }

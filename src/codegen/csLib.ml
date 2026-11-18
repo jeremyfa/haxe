@@ -546,6 +546,23 @@ let lookup_event_doc ctx ilpath ename =
 
 (* --- IL→Haxe signature conversion --- *)
 
+(* A nested type is a type of the module of its outermost enclosing type, so it is
+   referred to as Outer.Outer_Inner (the module is built with all the nested types). *)
+let nested_type_path ctx path hx_name params = match path with
+	| ns, outer :: _, _ ->
+		let module_name = match Hashtbl.find_opt il_to_hx_path (ns,[],outer) with
+			| Some (_, name) -> name
+			| None -> netcl_to_hx outer
+		in
+		Some (CTPath (CsCompat.make_ptp {
+			tpackage = fst (netpath_to_hx ctx.nstd (ns,[],""));
+			tname = module_name;
+			tparams = params;
+			tsub = Some hx_name;
+		} null_pos))
+	| _ ->
+		None
+
 let mk_type_path ctx path params =
 	let pack, name = match path with
 		| ns,[], cl ->
@@ -554,6 +571,9 @@ let mk_type_path ctx path params =
 			let nested = List.map netcl_to_hx nested in
 			ns, String.concat "_" nested ^ "_" ^ netcl_to_hx cl
 	in
+	match nested_type_path ctx path name params with
+	| Some ct -> ct
+	| None ->
 	CTPath (CsCompat.make_ptp {
 		tpackage = fst (netpath_to_hx ctx.nstd (pack,[],""));
 		tname = name;
@@ -612,6 +632,8 @@ let rec convert_signature ctx p = function
 		let params = List.map (fun s -> TPType (convert_signature ctx p s,null_pos)) args in
 		(* Look up pre-computed smart name (with arity stripping) first *)
 		(match Hashtbl.find_opt il_to_hx_path s with
+		| Some hx_path when nested_type_path ctx s (snd hx_path) params <> None ->
+			Option.get (nested_type_path ctx s (snd hx_path) params)
 		| Some hx_path ->
 			CTPath (CsCompat.make_ptp {
 				tpackage = fst hx_path;
@@ -1520,7 +1542,13 @@ class net_library com name file_path std = object(self)
 		with | Not_found | Exit ->
 			()
 		in
-		build path;
+		(* A nested type is built with the module of its enclosing type (from cnested
+		   above): building it again as a module of its own would define it twice. *)
+		let is_nested = match self#lookup path with
+			| Some { cpath = (_, _ :: _, _) } -> true
+			| _ | exception (Not_found | Exit) -> false
+		in
+		if not is_nested then build path;
 		match !cp with
 			| [] -> None
 			| cp -> Some (pack,cp)
@@ -1624,6 +1652,9 @@ let maybe_load_net_std com net_std_base =
 				let file = Filename.concat dir f in
 				if Common.raw_defined com "net_loader_debug" then
 					Printf.printf "(net-lib)   Loading %s\n" file;
-				add_net_lib com file false
+				let init = add_net_lib com file false in
+				(* part of the target framework: not referenced by the generated project *)
+				(List.hd com.native_libs.net_libs)#add_flag FlagIsStd;
+				init
 			)
 	end
