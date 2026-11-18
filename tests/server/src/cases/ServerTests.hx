@@ -67,13 +67,15 @@ class ServerTests extends TestCase {
 		assertHasPrint("2");
 	}
 
-	function testDceEmpty() {
-		vfs.putContent("Empty.hx", getTemplate("Empty.hx"));
-		var args = ["-main", "Empty", "--no-output", "--jvm", "java.jar"];
-		runHaxe(args);
-		runHaxeJson(args, cast "typer/compiledTypes" /* TODO */, {});
-		assertHasField("", "Type", "enumIndex", true);
-	}
+	// This test relied on the std of the removed Java source target, which kept
+	// Type.enumIndex. It is disabled the same way in Haxe 5.
+	// function testDceEmpty() {
+	// 	vfs.putContent("Empty.hx", getTemplate("Empty.hx"));
+	// 	var args = ["-main", "Empty", "--no-output", "--jvm", "java.jar"];
+	// 	runHaxe(args);
+	// 	runHaxeJson(args, cast "typer/compiledTypes" /* TODO */, {});
+	// 	assertHasField("", "Type", "enumIndex", true);
+	// }
 
 	function testBuildMacro() {
 		vfs.putContent("BuildMacro.hx", getTemplate("BuildMacro.hx"));
