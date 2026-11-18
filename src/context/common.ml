@@ -407,8 +407,6 @@ type context = {
 	mutable neko_lib_paths : string list;
 	mutable include_files : (string * string) list;
 	mutable native_libs : native_libraries;
-	mutable net_std : string list;
-	net_path_map : (path,string list * string list * string) Hashtbl.t;
 	mutable c_args : string list;
 	mutable js_gen : (unit -> unit) option;
 	(* misc *)
@@ -812,9 +810,7 @@ let create compilation_step cs version args =
 		main = None;
 		flash_version = 10.;
 		resources = Hashtbl.create 0;
-		net_std = [];
 		native_libs = create_native_libs();
-		net_path_map = Hashtbl.create 0;
 		c_args = [];
 		neko_lib_paths = [];
 		include_files = [];

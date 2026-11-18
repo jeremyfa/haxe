@@ -124,7 +124,6 @@ module Setup = struct
 					actx.classes <- (Path.parse_path "cpp.cppia.HostClasses" ) :: actx.classes;
 				"cpp"
 			| Cs ->
-				Dotnet.before_generate com;
 				add_std "cs"; "cs"
 			| Java ->
 				(* java_ver and java0..N: still read by std/java/_std/Sys.hx *)
@@ -591,8 +590,6 @@ module HighLevel = struct
 				loop acc (lines @ args)
 			| ("--jvm" as arg) :: dir :: args ->
 				loop_lib arg dir "hxjava" acc args
-			| ("--cs" | "-cs" as arg) :: dir :: args ->
-				loop_lib arg dir "hxcs" acc args
 			| arg :: l ->
 				match List.rev (ExtString.String.nsplit arg ".") with
 				| "hxml" :: _ :: _ when (match acc with "-cmd" :: _ | "--cmd" :: _ -> false | _ -> true) ->

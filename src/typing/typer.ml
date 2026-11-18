@@ -322,10 +322,7 @@ let rec type_ident_raise ctx i p mode with_type =
 		AKExpr (mk (TConst TSuper) t p)
 	| "null" ->
 		let acc =
-			(* Hack for #10787 *)
-			if ctx.com.platform = Cs then
-				AKExpr (null (spawn_monomorph ctx p) p)
-			else begin
+			begin
 				let tnull () = ctx.t.tnull (spawn_monomorph ctx p) in
 				let t = match with_type with
 					| WithType.WithType(t,_) ->

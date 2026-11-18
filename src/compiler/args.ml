@@ -81,8 +81,8 @@ let parse_args com =
 			Common.define com Define.Cppia;
 			set_platform com Cpp file;
 		),"<file>","generate Cppia bytecode into target file");
-		("Target",["--cs"],["-cs"],Arg.String (fun dir ->
-			set_platform com Cs dir;
+		("Target",["--cs"],["-cs"],Arg.String (fun _ ->
+			raise (Arg.Bad "The C# target is being replaced and is not available in this build")
 		),"<directory>","generate C# code into target directory");
 		("Target",["--java"],["-java"],Arg.String (fun _ ->
 			raise (Arg.Bad "The Java source target was removed: use --jvm <file.jar> to generate JVM bytecode")
@@ -214,12 +214,6 @@ let parse_args com =
 		("Target-specific",["--net-lib"],["-net-lib"],Arg.String (fun file ->
 			add_native_lib file false;
 		),"<file>[@std]","add an external .NET DLL file");
-		("Target-specific",["--net-std"],["-net-std"],Arg.String (fun file ->
-			Dotnet.add_net_std com file
-		),"<file>","add a root std .NET DLL search path");
-		("Target-specific",["--c-arg"],["-c-arg"],Arg.String (fun arg ->
-			com.c_args <- arg :: com.c_args
-		),"<arg>","pass option <arg> to the native Java/C# compiler");
 		("Compilation",["-r";"--resource"],["-resource"],Arg.String (fun res ->
 			let file, name = (match ExtString.String.nsplit res "@" with
 				| [file; name] -> file, name

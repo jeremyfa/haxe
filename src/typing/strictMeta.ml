@@ -51,10 +51,7 @@ let rec process_meta_argument ?(toplevel=true) ctx expr = match expr.eexpr with
 		process_meta_argument ~toplevel ctx e
 	| TTypeExpr md when toplevel ->
 		let p = expr.epos in
-		if ctx.com.platform = Cs then
-			(ECall( (EConst(Ident "typeof"), p), [get_native_repr md expr.epos] ), p)
-		else
-			(efield(get_native_repr md expr.epos, "class"), p)
+		(efield(get_native_repr md expr.epos, "class"), p)
 	| TTypeExpr md ->
 		get_native_repr md expr.epos
 	| _ ->
@@ -66,12 +63,7 @@ let handle_fields ctx fields_to_check with_type_expr =
 		let pos = snd expr in
 		let field = (efield(with_type_expr,name), pos) in
 		let fieldexpr = (EConst(Ident name),pos) in
-		let left_side = match ctx.com.platform with
-			| Cs -> field
-			| Java -> (ECall(field,[]),pos)
-			| _ -> die "" __LOC__
-		in
-
+		let left_side = (ECall(field,[]),pos) in
 		let left = type_expr ctx left_side NoValue in
 		let right = type_expr ctx expr (WithType.with_type left.etype) in
 		unify ctx left.etype right.etype (snd expr);
@@ -88,45 +80,25 @@ let make_meta ctx texpr extra =
 			display_error ctx.com "Unexpected expression" texpr.epos; die "" __LOC__
 
 let get_strict_meta ctx meta params pos =
-	let pf = ctx.com.platform in
 	let changed_expr, fields_to_check, ctype = match params with
 		| [ECall(ef, el),p] ->
 			let tpath = field_to_type_path ctx.com ef in
-			begin match pf with
-			| Cs ->
-				let el, fields = match List.rev el with
-					| (EObjectDecl(decl),_) :: el ->
-						List.rev el, decl
-					| _ ->
-						el, []
-				in
-				(ENew((tpath,snd ef), el), p), fields, CTPath tpath
-			| Java ->
-				let fields = match el with
-				| [EObjectDecl(fields),_] ->
-					fields
-				| [] ->
-					[]
-				| (_,p) :: _ ->
-					display_error ctx.com "Object declaration expected" p;
-					[]
-				in
-				ef, fields, CTPath tpath
-			| _ ->
-				Error.typing_error "@:strict is not supported on this target" p
-			end
+			let fields = match el with
+			| [EObjectDecl(fields),_] ->
+				fields
+			| [] ->
+				[]
+			| (_,p) :: _ ->
+				display_error ctx.com "Object declaration expected" p;
+				[]
+			in
+			ef, fields, CTPath tpath
 		| [EConst(Ident i),p as expr] ->
 			let tpath = { tpackage=[]; tname=i; tparams=[]; tsub=None } in
-			if pf = Cs then
-				(ENew((tpath,p), []), p), [], CTPath tpath
-			else
-				expr, [], CTPath tpath
+			expr, [], CTPath tpath
 		| [ (EField(_),p as field) ] ->
 			let tpath = field_to_type_path ctx.com field in
-			if pf = Cs then
-				(ENew((tpath,p), []), p), [], CTPath tpath
-			else
-				field, [], CTPath tpath
+			field, [], CTPath tpath
 		| _ ->
 			display_error ctx.com "A @:strict metadata must contain exactly one parameter. Please check the documentation for more information" pos;
 			raise Exit
@@ -139,12 +111,9 @@ let get_strict_meta ctx meta params pos =
 let check_strict_meta ctx metas =
 	let pf = ctx.com.platform in
 	match pf with
-		| Cs | Java ->
+		| Java ->
 			let ret = ref [] in
 			List.iter (function
-				| Meta.AssemblyStrict,params,pos -> (try
-					ret := get_strict_meta ctx Meta.AssemblyMeta params pos :: !ret
-				with | Exit -> ())
 				| Meta.Strict,params,pos -> (try
 					ret := get_strict_meta ctx Meta.Meta params pos :: !ret
 				with | Exit -> ())

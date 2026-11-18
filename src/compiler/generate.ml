@@ -78,7 +78,7 @@ let generate ctx tctx ext actx =
 		| Cpp ->
 			Gencpp.generate,"cpp"
 		| Cs ->
-			Gencs.generate,"cs"
+			die "" __LOC__
 		| Java ->
 			Genjvm.generate actx.jvm_flag,"java"
 		| Python ->
