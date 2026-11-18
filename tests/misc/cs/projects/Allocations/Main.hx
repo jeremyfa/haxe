@@ -227,7 +227,7 @@ class Main {
 			}
 			sink = sum;
 		});
-		check("for loop on an Iterator<Int> (class instance)", ITERATOR_MAX, () -> {
+		check("for loop on an Iterator<Int> (class instance)", NONE, () -> {
 			// one iterator object per measure, N iterations
 			sink = sumIterator(new IntRange(N));
 		});
@@ -248,7 +248,4 @@ class Main {
 	// One object and nothing else: no dictionary, no array of values, no boxing
 	static inline var POS_MAX = 96.0;
 	static inline var LITERAL_MAX = 64.0;
-
-	// Allowance for what still allocates, in bytes per iteration
-	static inline var ITERATOR_MAX = 100000.0;
 }

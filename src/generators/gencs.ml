@@ -3693,6 +3693,28 @@ let rec cs_expr_of_texpr ectx e =
 		| CsTypeClass (path, _) ->
 			(* Some other concrete class - try direct call *)
 			CsCall (CsField (obj, escape_identifier cf.cf_name), args)
+		| CsTypeObject when (match anon_field_access ectx.gctx inner_type cf.cf_name with
+				| Some (_, { af_method = Some am }) -> List.length am.am_params = List.length args && List.length param_types = List.length args
+				| _ -> false) ->
+			(* Method a known structure declares: the caller of its class calls the method
+			   of the object when it implements the interface of the structure *)
+			let (ac, af) = Option.get (anon_field_access ectx.gctx inner_type cf.cf_name) in
+			let am = Option.get af.af_method in
+			let result_type = cs_type_of_type ectx.gctx e.etype in
+			let result_type = CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope result_type in
+			let (suffix, ret) = CsAnon.variant_for am result_type in
+			let convert_arg arg t expected =
+				if cs_type_equals t expected then arg
+				else CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx arg t expected
+			in
+			let rec convert_args args types expected = match args, types, expected with
+				| arg :: args, t :: types, e :: expected -> convert_arg arg (cs_type_of_type ectx.gctx t) e :: convert_args args types expected
+				| _ -> []
+			in
+			let call = CsStaticCall (CsAnon.class_type ac, CsAnon.caller_name af suffix, obj :: convert_args args param_types am.am_params) in
+			if ret = CsTypeVoid || cs_type_equals ret result_type then call
+			else if ret = CsTypeObject then cast_object_to_type result_type call
+			else CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx call ret result_type
 		| CsTypeObject ->
 			(* Object type (from TAnon/structural type) - read the function, through the accessor
 			   of the structure class if there is one, then Runtime.invokeFunctionN *)
@@ -10727,6 +10749,12 @@ let generate com =
 		| _ -> ()
 	) com.types;
 
+	List.iter (function
+		| TClassDecl c -> Hashtbl.replace gctx.known_types c.cl_path ()
+		| TEnumDecl e -> Hashtbl.replace gctx.known_types e.e_path ()
+		| _ -> ()
+	) com.types;
+
 	(* Give object literals the structure type their context expects *)
 	List.iter (fun mt ->
 		match mt with
@@ -10739,14 +10767,38 @@ let generate com =
 	) com.types;
 
 	(* Generate all types *)
+	let class_defs = ref [] in
 	List.iter (fun mt ->
 		match generate_type gctx mt with
-		| Some td -> gctx.generated_types <- td :: gctx.generated_types
+		| Some td ->
+			gctx.generated_types <- td :: gctx.generated_types;
+			(match mt with TClassDecl c -> class_defs := (td, c) :: !class_defs | _ -> ())
 		| None -> ()
 	) com.types;
 
+	(* The structures in use are now known: the classes that fit one that declares methods
+	   (Iterator and the like, see csAnon.ml) implement its interface *)
+	CsAnon.collect_interfaces gctx com.types;
+	if gctx.anon_interfaces <> [] then
+		gctx.generated_types <- List.map (fun td ->
+			match td with
+			| CsClassDef d ->
+				begin match List.assq_opt td !class_defs with
+				| Some c ->
+					begin match CsAnon.class_interfaces gctx c with
+					| [] -> td
+					| l -> CsClassDef { d with
+						c_interfaces = d.c_interfaces @ List.map (fun (_, ac) -> CsAnon.interface_type ac) l;
+						c_members = d.c_members @ List.concat (List.map (fun (_, ac) -> CsAnon.generate_bridges gctx c ac) l);
+					}
+					end
+				| None -> td
+				end
+			| _ -> td
+		) gctx.generated_types;
+
 	(* Classes of the anonymous structures the generated code uses *)
-	List.iter (fun td -> gctx.generated_types <- td :: gctx.generated_types) (CsAnon.generate_classes gctx);
+	List.iter (fun td -> gctx.generated_types <- td :: gctx.generated_types) (CsAnon.generate_classes gctx generate_dynamic_invoke_call);
 
 	(* Group types by namespace and write files, including closures with their origin class *)
 	let files = List.map (fun td ->

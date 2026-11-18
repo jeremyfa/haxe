@@ -33,17 +33,26 @@ open CsAst
 open CsTypeMapping
 open Genshared
 
+(* Signature of a method a structure declares (function next():T) *)
+type anon_method = {
+	am_params : cs_type list;
+	am_ret : cs_type;
+	am_generic_ret : bool;  (* the return type is a type parameter: the method has typed variants *)
+}
+
 (* A typed field of a generated anonymous structure class *)
 type anon_field = {
 	af_name : string;
 	af_type : cs_type;
 	af_index : int;
+	af_method : anon_method option;
 }
 
 (* A class generated for a known anonymous structure (see csAnon.ml) *)
 type anon_class = {
 	ac_path : path;
 	ac_fields : anon_field list;  (* in declaration order *)
+	ac_interface : path option;  (* interface of the methods of the structure, if it declares some *)
 }
 
 (* Generation context - holds state for the entire code generation pass *)
@@ -61,6 +70,9 @@ type gen_context = {
 	anon_by_key : (string, anon_class) Hashtbl.t;  (* structure classes by field names and C# types *)
 	anon_by_typedef : (path, anon_class option) Hashtbl.t;  (* cache for typedefs that are structures *)
 	anon_names : (string, unit) Hashtbl.t;  (* class names in use *)
+	mutable anon_interfaces : (Type.tdef * anon_class) list;  (* typedefs of the structures in use that declare methods *)
+	known_types : (path, unit) Hashtbl.t;  (* classes and enums of the compilation *)
+	anon_implements : (path * path, bool) Hashtbl.t;  (* (class, structure class) -> the class implements the interface *)
 }
 
 (* Expression generation context - holds state for translating expressions *)
@@ -102,6 +114,9 @@ let create_context com = {
 	anon_by_key = Hashtbl.create 64;
 	anon_by_typedef = Hashtbl.create 64;
 	anon_names = Hashtbl.create 64;
+	anon_interfaces = [];
+	known_types = Hashtbl.create 256;
+	anon_implements = Hashtbl.create 64;
 }
 
 (* Create a new expression context *)

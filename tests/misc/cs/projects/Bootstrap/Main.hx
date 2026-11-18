@@ -69,6 +69,7 @@ class Main {
 		testVoidTypeParam();
 		testExceptionSubclasses();
 		testTypedStructures();
+		testStructureMethods();
 		#if hxcoro
 		CoroutineTests.run();
 		#end
@@ -2240,6 +2241,247 @@ class Main {
 
 	static function here(?pos:PosInfos):PosInfos {
 		return pos;
+	}
+
+	static function sumInts(it:Iterator<Int>):Int {
+		var sum = 0;
+		for (v in it)
+			sum += v;
+		return sum;
+	}
+
+	static function sumFloats(it:Iterator<Float>):Float {
+		var sum = 0.0;
+		for (v in it)
+			sum += v;
+		return sum;
+	}
+
+	static function joinAll<T>(it:Iterator<T>):String {
+		var buf = "";
+		for (v in it)
+			buf += Std.string(v);
+		return buf;
+	}
+
+	static function countTrue(it:Iterator<Bool>):Int {
+		var n = 0;
+		while (it.hasNext())
+			if (it.next())
+				n++;
+		return n;
+	}
+
+	static function sumIterable(it:Iterable<Int>):Int {
+		var sum = 0;
+		for (v in it)
+			sum += v;
+		return sum;
+	}
+
+	static function useShape(s:TShape):String {
+		s.scale(2);
+		s.move(1, 0.5);
+		return s.describe("shape") + " " + s.area();
+	}
+
+	static function testStructureMethods() {
+		// Methods of a structure are called on class instances through an interface
+		eq(10, sumInts(new CountDown(4)));
+		eq(10.0, sumFloats(new CountDown(4)));
+		eq("4321", joinAll(new CountDown(4)));
+		eq(3.0, sumFloats(new HalfSteps(3)));
+		eq("abc", joinAll(new Letters("abc")));
+		eq("abc", joinAll(new GenericItems(["a", "b", "c"])));
+		eq(6, sumInts(new GenericItems([1, 2, 3])));
+		eq(2, countTrue(new GenericItems([true, false, true])));
+		eq(1.5, sumFloats(new GenericItems([0.5, 1.0])));
+
+		// a subclass that overrides the methods
+		eq(20, sumInts(new DoubleCountDown(4)));
+		eq("8642", joinAll(new DoubleCountDown(4)));
+
+		// standard iterators
+		eq(6, sumInts([1, 2, 3].iterator()));
+		eq(6, sumInts(0...4));
+		eq(6, sumIterable([1, 2, 3]));
+		eq(3, sumIterable(new CountDownSource(2)));
+		var map = new Map<String, Int>();
+		map.set("a", 1);
+		map.set("b", 2);
+		eq(3, sumInts(map.iterator()));
+		eq(3, sumIterable(map));
+
+		// an object literal, which stores functions
+		var n = 0;
+		var literal:Iterator<Int> = {hasNext: function() return n < 3, next: function() return ++n};
+		eq(6, sumInts(literal));
+		n = 0;
+		eq("123", joinAll(literal));
+
+		// a dynamic object
+		var k = 0;
+		var dyn:Dynamic = {};
+		dyn.hasNext = function() return k < 2;
+		dyn.next = function() return ++k;
+		eq(3, sumInts(dyn));
+
+		// a class with a dynamic method does not implement the interface
+		eq(3, sumInts(new DynamicCountDown(2)));
+
+		// methods with arguments, void and non-void
+		var shape = new ShapeClass();
+		eq("shape 2x2 at 1,0.5 4", useShape(shape));
+		eq(2.0, shape.size);
+		var w = 1.0;
+		var literalShape:TShape = {
+			scale: function(by:Int) w *= by,
+			move: function(x:Int, y:Float) {},
+			describe: function(name:String) return name + "!",
+			area: function() return w
+		};
+		eq("shape! 2", useShape(literalShape));
+
+		// the methods are still readable as values
+		var it:Iterator<Int> = new CountDown(2);
+		var next = it.next;
+		eq(2, next());
+		eq(1, it.next());
+		f(it.hasNext());
+		t(Reflect.isFunction(Reflect.field(it, "next")));
+	}
+}
+
+typedef TShape = {
+	function scale(by:Int):Void;
+	function move(x:Int, y:Float):Void;
+	function describe(name:String):String;
+	function area():Float;
+}
+
+class ShapeClass {
+	public var size:Float = 1;
+
+	var px:Int = 0;
+	var py:Float = 0;
+
+	public function new() {}
+
+	public function scale(by:Int):Void {
+		size *= by;
+	}
+
+	public function move(x:Int, y:Float):Void {
+		px += x;
+		py += y;
+	}
+
+	public function describe(name:String):String {
+		return name + " " + size + "x" + size + " at " + px + "," + py;
+	}
+
+	public function area():Float {
+		return size * size;
+	}
+}
+
+class CountDown {
+	var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public function hasNext():Bool {
+		return n > 0;
+	}
+
+	public function next():Int {
+		return n--;
+	}
+}
+
+class DoubleCountDown extends CountDown {
+	override public function next():Int {
+		return super.next() * 2;
+	}
+}
+
+class DynamicCountDown {
+	var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public dynamic function hasNext():Bool {
+		return n > 0;
+	}
+
+	public function next():Int {
+		return n--;
+	}
+}
+
+class CountDownSource {
+	var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public function iterator():Iterator<Int> {
+		return new CountDown(n);
+	}
+}
+
+class HalfSteps {
+	var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public function hasNext():Bool {
+		return n > 0;
+	}
+
+	public function next():Float {
+		return n-- * 0.5;
+	}
+}
+
+class Letters {
+	var s:String;
+	var i:Int = 0;
+
+	public function new(s:String) {
+		this.s = s;
+	}
+
+	public function hasNext():Bool {
+		return i < s.length;
+	}
+
+	public function next():String {
+		return s.charAt(i++);
+	}
+}
+
+class GenericItems<T> {
+	var items:Array<T>;
+	var i:Int = 0;
+
+	public function new(items:Array<T>) {
+		this.items = items;
+	}
+
+	public function hasNext():Bool {
+		return i < items.length;
+	}
+
+	public function next():T {
+		return items[i++];
 	}
 }
 

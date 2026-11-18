@@ -69,10 +69,27 @@ let is_normal_anon an = match !(an.a_status) with
 	| Closed | Const | Extend _ -> true
 	| Statics _ | EnumStatics _ | AbstractStatics _ -> false
 
+(* Tells if the classes and enums a type names are part of the output. A typedef can
+   name a type nothing else uses, which is then not generated. *)
+let type_exists gctx t =
+	let rec loop depth t =
+		depth > 16 || match t with
+		| TMono {tm_type = Some t} -> loop (depth + 1) t
+		| TLazy f -> loop (depth + 1) (lazy_type f)
+		| TMono _ | TDynamic _ | TFun _ | TAnon _ -> true
+		| TType (td, tl) -> loop (depth + 1) (apply_typedef td tl)
+		| TInst ({cl_kind = KTypeParameter _}, _) -> true
+		| TInst (c, tl) -> Hashtbl.mem gctx.known_types c.cl_path && List.for_all (loop (depth + 1)) tl
+		| TEnum (e, tl) -> Hashtbl.mem gctx.known_types e.e_path && List.for_all (loop (depth + 1)) tl
+		| TAbstract (a, tl) when Meta.has Meta.CoreType a.a_meta -> List.for_all (loop (depth + 1)) tl
+		| TAbstract (a, tl) -> loop (depth + 1) (Abstract.get_underlying_type a tl)
+	in
+	loop 0 t
+
 (* C# type of the field that stores a value of the given Haxe type *)
 let field_type gctx t =
 	let ct = cs_type_of_type gctx t in
-	if collect_type_params [] ct <> [] then CsTypeObject
+	if collect_type_params [] ct <> [] || not (type_exists gctx t) then CsTypeObject
 	else match ct with
 	| CsTypeVoid | CsTypeDynamic | CsTypeVar -> CsTypeObject
 	| _ -> ct
@@ -84,6 +101,61 @@ let find_field ac name =
 
 let getter_name af = "_hx_get_" ^ af.af_name
 let setter_name af = "_hx_set_" ^ af.af_name
+
+(* A method whose return type is a type parameter returns an object in the interface.
+   It also has one variant per primitive type, so that a call site that knows the type
+   gets the value without boxing: next() and next_int(), next_double(), next_bool(). *)
+let variants am =
+	if am.am_generic_ret then
+		[("", CsTypeObject); ("_int", CsTypeInt); ("_double", CsTypeDouble); ("_bool", CsTypeBool)]
+	else
+		[("", am.am_ret)]
+
+(* The variant to call for the return type a call site expects *)
+let variant_for am ret =
+	if am.am_generic_ret then
+		begin match ret with
+		| CsTypeInt -> ("_int", CsTypeInt)
+		| CsTypeDouble -> ("_double", CsTypeDouble)
+		| CsTypeBool -> ("_bool", CsTypeBool)
+		| _ -> ("", CsTypeObject)
+		end
+	else
+		("", am.am_ret)
+
+let caller_name af suffix = "_hx_call_" ^ af.af_name ^ suffix
+
+let interface_type ac = match ac.ac_interface with
+	| Some path -> CsTypeClass (path, [])
+	| None -> die "" __LOC__
+
+(* Signature of a method field, None if calls to it stay dynamic *)
+let method_signature gctx cf =
+	match cf.cf_kind, follow cf.cf_type with
+	| Method MethNormal, TFun (args, ret) when cf.cf_params = [] ->
+		let is_plain t = collect_type_params [] t = [] && t <> CsTypeVoid in
+		let params = List.map (fun (_, opt, t) ->
+			let is_null = match follow t with
+				| TAbstract ({a_path = ([], "Null")}, _) -> true
+				| _ -> false
+			in
+			if type_exists gctx t then cs_type_of_type gctx (if opt && not is_null then gctx.com.Common.basic.tnull t else t)
+			else CsTypeObject
+		) args in
+		let generic_ret = match follow ret with
+			| TInst ({cl_kind = KTypeParameter _}, _) -> true
+			| _ -> false
+		in
+		let ret = if ExtType.is_void (follow ret) then CsTypeVoid
+			else if type_exists gctx ret then cs_type_of_type gctx ret
+			else CsTypeObject in
+		let has_rest = List.exists (fun (_, _, t) -> ExtType.is_rest (follow t)) args in
+		if List.for_all is_plain params && (ret = CsTypeVoid || is_plain ret) && not has_rest then
+			Some { am_params = params; am_ret = ret; am_generic_ret = generic_ret }
+		else
+			None
+	| _ ->
+		None
 
 let register gctx an =
 	let fields = PMap.fold (fun cf acc -> cf :: acc) an.a_fields [] in
@@ -99,8 +171,17 @@ let register gctx an =
 			af_name = cf.cf_name;
 			af_type = field_type gctx cf.cf_type;
 			af_index = i;
+			af_method = method_signature gctx cf;
 		}) fields in
-		let key = String.concat ";" (List.map (fun af -> af.af_name ^ ":" ^ CsPrinter.s_cs_type af.af_type) fields) in
+		let key = String.concat ";" (List.map (fun af ->
+			let signature = match af.af_method with
+				| Some am ->
+					Printf.sprintf "(%s)%s%s" (String.concat "," (List.map CsPrinter.s_cs_type am.am_params))
+						(CsPrinter.s_cs_type am.am_ret) (if am.am_generic_ret then "*" else "")
+				| None -> ""
+			in
+			af.af_name ^ ":" ^ CsPrinter.s_cs_type af.af_type ^ signature
+		) fields) in
 		try
 			Some (Hashtbl.find gctx.anon_by_key key)
 		with Not_found ->
@@ -116,6 +197,7 @@ let register gctx an =
 			let ac = {
 				ac_path = (generated_pack, name);
 				ac_fields = fields;
+				ac_interface = if List.exists (fun af -> af.af_method <> None) fields then Some (generated_pack, "I" ^ name) else None;
 			} in
 			Hashtbl.replace gctx.anon_by_key key ac;
 			Some ac
@@ -157,6 +239,100 @@ let identify gctx t =
 			None
 	in
 	loop 0 t
+
+(* ---- Interfaces of structures that declare methods
+
+   typedef Iterator<T> = { function hasNext():Bool; function next():T; } gives an
+   interface with the two methods. Every Haxe class that fits the structure implements
+   it (the classes are completed once all the code is generated, when the structures in
+   use are known), and a call on a value typed by the structure tests the interface first:
+
+       public static int _hx_call_next_int(object o)
+           => o is IAnon_hasNext_next i ? i.next_int() : (dynamic call);
+
+   so that iterating on a class instance calls its methods, instead of reading them as
+   closures by name. *)
+
+(* Called when the code is generated: the structures it uses are then known. Keeps the
+   typedefs of the ones that declare methods, for class_interfaces. *)
+let collect_interfaces gctx types =
+	List.iter (fun mt -> match mt with
+		| TTypeDecl td ->
+			begin match Hashtbl.find_opt gctx.anon_by_typedef td.t_path with
+			| Some (Some ({ ac_interface = Some _ } as ac)) when not (List.exists (fun (_, ac') -> ac' == ac) gctx.anon_interfaces) ->
+				gctx.anon_interfaces <- (td, ac) :: gctx.anon_interfaces
+			| _ -> ()
+			end
+		| _ -> ()
+	) types
+
+(* The declaration of a method of a class, in the first class that has it: an override
+   has the C# signature of the method it overrides *)
+let rec find_class_method c name =
+	let inherited = match c.cl_super with
+		| Some (c, _) -> find_class_method c name
+		| None -> None
+	in
+	match inherited with
+	| Some _ -> inherited
+	| None -> (try Some (c, PMap.find name c.cl_fields) with Not_found -> None)
+
+(* The methods of a class that implement the interface of a structure, as
+   (structure field, signature, declaring class, class field) *)
+let class_methods gctx c ac =
+	let rec loop = function
+		| [] -> Some []
+		| ({ af_method = Some am } as af) :: rest ->
+			begin match find_class_method c af.af_name with
+			| Some (c', ({ cf_kind = Method (MethNormal | MethInline) } as cf)) when cf.cf_params = [] && cf.cf_overloads = [] && has_class_field_flag cf CfPublic ->
+				begin match follow cf.cf_type with
+				| TFun (args, ret) when List.length args = List.length am.am_params ->
+					let types = (if ExtType.is_void (follow ret) then [] else [cs_type_of_type gctx ret])
+						@ List.map (fun (_, _, t) -> cs_type_of_type gctx t) args in
+					let rest_arg = List.exists (fun (_, _, t) -> ExtType.is_rest (follow t)) args in
+					if rest_arg || ExtType.is_void (follow ret) <> (am.am_ret = CsTypeVoid)
+						|| List.exists (fun t -> collect_type_params [] t <> []) types then None
+					else begin match loop rest with
+						| Some l -> Some ((af, am, c', cf) :: l)
+						| None -> None
+					end
+				| _ -> None
+				end
+			| _ -> None
+			end
+		| _ :: rest -> loop rest
+	in
+	loop ac.ac_fields
+
+let rec class_implements gctx c (td, ac) =
+	let key = (c.cl_path, ac.ac_path) in
+	try
+		Hashtbl.find gctx.anon_implements key
+	with Not_found ->
+		let r =
+			not (has_class_flag c CExtern) && not (has_class_flag c CInterface)
+			&& class_methods gctx c ac <> None
+			&& begin try
+				let monos l = List.map (fun _ -> mk_mono ()) l in
+				Type.unify (TInst (c, monos c.cl_params)) (TType (td, monos td.t_params));
+				true
+			with Unify_error _ ->
+				false
+			end
+		in
+		Hashtbl.replace gctx.anon_implements key r;
+		r
+
+(* The structure interfaces a class declares: the ones it fits and that its parent
+   classes do not already implement *)
+let class_interfaces gctx c =
+	if has_class_flag c CExtern || has_class_flag c CInterface then []
+	else List.filter (fun ((_, ac) as iface) ->
+		class_implements gctx c iface
+		&& (match c.cl_super with
+			| Some (c', _) -> not (class_implements gctx c' iface)
+			| None -> true)
+	) (List.rev gctx.anon_interfaces)
 
 (* ---- Expected types of object literals
 
@@ -307,7 +483,7 @@ let rec accepts t value =
 	| _ when is_inherently_nullable t -> Some (either is_null (is t))
 	| _ -> Some (is t)
 
-let generate_class gctx ac =
+let generate_class gctx dynamic_invoke ac =
 	let cls = class_type ac in
 	let field_name af = escape_identifier af.af_name in
 	let str s = CsConst (CsConstString s) in
@@ -412,6 +588,27 @@ let generate_class gctx ac =
 		] in
 		[getter; setter]
 	) ac.ac_fields) in
+	(* _hx_call_<name>: call of a method the structure declares *)
+	let callers = List.concat (List.map (fun af -> match af.af_method with
+		| None -> []
+		| Some am ->
+			let o = CsLocal "o" in
+			let params = List.mapi (fun i t -> param (Printf.sprintf "a%d" i) t) am.am_params in
+			let args = List.mapi (fun i _ -> CsLocal (Printf.sprintf "a%d" i)) am.am_params in
+			let func = CsStaticCall (cls, getter_name af, [o]) in
+			List.map (fun (suffix, ret) ->
+				let direct = CsCall (CsField (CsLocal "i", escape_identifier af.af_name ^ suffix), args) in
+				let dynamic = dynamic_invoke func args am.am_params ret in
+				let is_interface = CsIsPattern (o, interface_type ac, Some "i") in
+				let body = if ret = CsTypeVoid then [
+					CsIf (is_interface, CsBlock [CsExprStmt direct], Some (CsBlock [CsExprStmt dynamic]))
+				] else [
+					CsIf (is_interface, CsBlock [CsReturn (Some direct)], None);
+					CsReturn (Some dynamic)
+				] in
+				static_meth (caller_name af suffix) ret (param "o" CsTypeObject :: params) body
+			) (variants am)
+	) ac.ac_fields) in
 	CsClassDef {
 		c_path = ac.ac_path;
 		c_access = AccessModifier.Public;
@@ -420,10 +617,78 @@ let generate_class gctx ac =
 		c_base = Some (CsTypeClass (NativeTypes.haxe_dynamic_object_path, []));
 		c_interfaces = [];
 		c_constraints = [];
-		c_members = fields @ [names; ctor; typed_names; typed_index; typed_get; typed_set] @ accessors;
+		c_members = fields @ [names; ctor; typed_names; typed_index; typed_get; typed_set] @ accessors @ callers;
 	}
 
-let generate_classes gctx =
+let generate_interface ac path =
+	let methods = List.concat (List.map (fun af -> match af.af_method with
+		| None -> []
+		| Some am ->
+			List.map (fun (suffix, ret) -> CsMemberMethod {
+				m_name = escape_identifier af.af_name ^ suffix;
+				m_return_type = ret;
+				m_access = AccessModifier.Public;
+				m_modifiers = [];
+				m_type_params = [];
+				m_params = List.mapi (fun i t -> { p_name = Printf.sprintf "a%d" i; p_type = Some t; p_default = None; p_modifier = None }) am.am_params;
+				m_body = None;
+				m_constraints = [];
+				m_explicit_interface = None;
+				m_attributes = [];
+			}) (variants am)
+	) ac.ac_fields) in
+	CsInterfaceDef {
+		i_path = path;
+		i_access = AccessModifier.Public;
+		i_modifiers = [];
+		i_type_params = [];
+		i_base = [];
+		i_constraints = [];
+		i_members = methods;
+	}
+
+(* Explicit implementations of the interface of a structure by a class that fits it:
+   each one calls the method of the class and converts the arguments and the result *)
+let generate_bridges gctx c ac =
+	let convert e from_type to_type =
+		if cs_type_equals from_type to_type then e
+		else match from_type with
+		| CsTypeObject -> CsTypeCoercion.cast_object_to_type to_type e
+		| _ ->
+			let e = CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> "_hx_tmp") gctx e from_type CsTypeObject in
+			if to_type = CsTypeObject then e else CsTypeCoercion.cast_object_to_type to_type (CsCast (CsTypeObject, e))
+	in
+	match class_methods gctx c ac with
+	| None -> []
+	| Some methods ->
+		List.concat (List.map (fun (af, am, c', cf) ->
+			let impl_args, impl_ret = match follow cf.cf_type with
+				| TFun (args, ret) -> List.map (fun (_, _, t) -> cs_type_of_type gctx t) args, cs_type_of_type gctx ret
+				| _ -> die "" __LOC__
+			in
+			let args = List.mapi (fun i (t, impl_t) -> convert (CsLocal (Printf.sprintf "a%d" i)) t impl_t) (List.combine am.am_params impl_args) in
+			List.map (fun (suffix, ret) ->
+				let call = CsCall (CsField (CsThis, get_cs_field_name c' cf), args) in
+				CsMemberMethod {
+					m_name = escape_identifier af.af_name ^ suffix;
+					m_return_type = ret;
+					m_access = AccessModifier.Public;
+					m_modifiers = [];
+					m_type_params = [];
+					m_params = List.mapi (fun i t -> { p_name = Printf.sprintf "a%d" i; p_type = Some t; p_default = None; p_modifier = None }) am.am_params;
+					m_body = Some [if ret = CsTypeVoid then CsExprStmt call else CsReturn (Some (convert call impl_ret ret))];
+					m_constraints = [];
+					m_explicit_interface = Some (interface_type ac);
+					m_attributes = [];
+				}
+			) (variants am)
+		) methods)
+
+let generate_classes gctx dynamic_invoke =
 	let classes = Hashtbl.fold (fun _ ac acc -> ac :: acc) gctx.anon_by_key [] in
 	let classes = List.sort (fun ac1 ac2 -> compare ac1.ac_path ac2.ac_path) classes in
-	List.map (generate_class gctx) classes
+	List.concat (List.map (fun ac ->
+		generate_class gctx dynamic_invoke ac :: (match ac.ac_interface with
+			| Some path -> [generate_interface ac path]
+			| None -> [])
+	) classes)
