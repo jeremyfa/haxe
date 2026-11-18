@@ -10929,19 +10929,20 @@ public class Program
 			Printf.sprintf "        switch (typeName)\n        {\n%s\n            default: break;\n        }"
 				(String.concat "\n" (List.map snd cases))
 		in
-		(* FNV-1a on the ASCII characters of the name, the same as in the generated initType *)
+		(* FNV-1a on the ASCII characters of the name, the same as in the generated initType.
+		   Computed with Int64: an OCaml int has 31 bits on 32-bit platforms. *)
 		let hash name =
-			let h = ref 2166136261 in
+			let h = ref 2166136261L in
 			String.iter (fun c ->
 				let c = Char.code c in
-				if c < 128 then h := ((!h lxor c) * 16777619) land 0xFFFFFFFF
+				if c < 128 then h := Int64.logand (Int64.mul (Int64.logxor !h (Int64.of_int c)) 16777619L) 0xFFFFFFFFL
 			) name;
 			!h
 		in
 		let rec spread count =
 			let buckets = Array.make count [] in
 			List.iter (fun ((key, _) as case) ->
-				let i = hash key mod count in
+				let i = Int64.to_int (Int64.rem (hash key) (Int64.of_int count)) in
 				buckets.(i) <- case :: buckets.(i)
 			) all_cases;
 			if Array.exists (fun l -> List.length l > max_cases) buckets then spread (count + 1)
