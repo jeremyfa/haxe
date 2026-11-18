@@ -218,5 +218,5 @@ let rec transform tnull e =
 
 (* Entry point: run the filter on an expression.
    Uses com.basic.tnull to wrap optional parameter types with Null<T>. *)
-let filter (com : Gctx.t) e =
+let filter (com : Common.context) e =
 	transform com.basic.tnull e

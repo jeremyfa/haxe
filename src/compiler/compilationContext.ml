@@ -24,6 +24,8 @@ type arg_context = {
 	mutable raise_usage : unit -> unit;
 	mutable display_arg : string option;
 	mutable deprecations : string list;
+	mutable net_doc_file : string option;
+	mutable net_std_path : string option;
 }
 
 type communication = {

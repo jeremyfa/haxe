@@ -124,7 +124,12 @@ module Setup = struct
 					actx.classes <- (Path.parse_path "cpp.cppia.HostClasses" ) :: actx.classes;
 				"cpp"
 			| Cs ->
-				add_std "cs"; "cs"
+				add_std "cs";
+				(* The exception filter refers to cs.Exception: type it with the other
+				   modules, otherwise it is loaded after com.types is built and its
+				   @:native path is never applied *)
+				actx.classes <- (["cs"],"Exception") :: actx.classes;
+				"cs"
 			| Java ->
 				(* java_ver and java0..N: still read by std/java/_std/Sys.hx *)
 				let java_ver = try
@@ -160,7 +165,7 @@ module Setup = struct
 				add_std "eval";
 				"eval"
 
-	let create_typer_context ctx native_libs =
+	let create_typer_context ctx actx =
 		let com = ctx.com in
 		Common.log com ("Classpath: " ^ (String.concat ";" com.class_path));
 		let buffer = Buffer.create 64 in
@@ -174,9 +179,14 @@ module Setup = struct
 		Typecore.type_expr_ref := (fun ?(mode=MGet) ctx e with_type -> Typer.type_expr ~mode ctx e with_type);
 		com.callbacks#run com.callbacks#get_before_typer_create;
 		(* Native lib pass 1: Register *)
-		let fl = List.map (fun (file,extern) -> NativeLibraryHandler.add_native_lib com file extern) (List.rev native_libs) in
+		let fl = List.map (fun (file,extern) -> NativeLibraryHandler.add_native_lib com file extern) (List.rev actx.native_libs) in
 		(* Native lib pass 2: Initialize *)
 		List.iter (fun f -> f()) fl;
+		(* C#: auto-load the .NET standard library (from hxcs if available) *)
+		let net_std_fns = CsLib.maybe_load_net_std com actx.net_std_path in
+		List.iter (fun f -> f()) net_std_fns;
+		(* C#: stubs for the missing .NET types referenced by the loaded DLLs *)
+		CsLib.register_stub_provider com;
 		Typer.create com
 
 	let executable_path() =
@@ -328,11 +338,17 @@ let compile ctx actx =
 	List.iter (fun f -> f()) (List.rev (actx.pre_compilation));
 	t();
 	com.stage <- CInitialized;
+	begin match actx.net_doc_file with
+		| Some xml_path ->
+			let output = CsLib.generate_hxdoc xml_path in
+			com.info output null_pos
+		| None -> ()
+	end;
 	if actx.classes = [([],"Std")] && not actx.force_typing then begin
 		if actx.cmds = [] && not actx.did_something then actx.raise_usage();
 	end else begin
 		(* Actual compilation starts here *)
-		let tctx = Setup.create_typer_context ctx actx.native_libs in
+		let tctx = Setup.create_typer_context ctx actx in
 		com.stage <- CTyperCreated;
 		let display_file_dot_path = DisplayProcessing.maybe_load_display_file_before_typing tctx display_file_dot_path in
 		begin try

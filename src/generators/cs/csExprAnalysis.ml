@@ -26,6 +26,7 @@ open Globals
 open Type
 open CsAst
 open CsGlobals
+open CsCompat
 
 (* ============================================================
    Haxe Expression Analysis
@@ -64,7 +65,8 @@ let rec expr_contains_this e =
 		(match e3_opt with Some e3 -> expr_contains_this e3 | None -> false)
 	| TWhile (e1, e2, _) ->
 		expr_contains_this e1 || expr_contains_this e2
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		expr_contains_this sw.switch_subject ||
 		List.exists (fun case -> List.exists expr_contains_this case.case_patterns || expr_contains_this case.case_expr) sw.switch_cases ||
 		(match sw.switch_default with Some e1 -> expr_contains_this e1 | None -> false)
@@ -79,6 +81,9 @@ let rec expr_contains_this e =
 	| TBreak | TContinue -> false
 	| TFunction tf ->
 		expr_contains_this tf.tf_expr
+	| TFor (_, e1, e2) ->
+		(* only in Haxe 4.3, removed by the filters before generation *)
+		expr_contains_this e1 || expr_contains_this e2
 
 (* Find the type of the first non-void return expression inside an expression tree.
    Returns None if no return with value is found, Some type if found.
@@ -102,7 +107,8 @@ let rec find_return_type e =
 			| None -> None
 		end
 	| TWhile (_, body, _) -> find_return_type body
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		let check_case acc case =
 			match acc with Some _ -> acc | None -> find_return_type case.case_expr
 		in
@@ -148,6 +154,7 @@ let rec expr_contains_statements e =
 	| TReturn None | TBreak | TContinue -> false
 	| TBlock [] -> false
 	| TEnumIndex e1 -> expr_contains_statements e1
+	| TFor _ -> true  (* only in Haxe 4.3, removed by the filters before generation *)
 
 (* Collect all local variable IDs used in an expression *)
 let collect_locals_used exprs =
@@ -265,7 +272,8 @@ let rec expr_calls_virtual_method_on_this e =
 let rec has_break_in_switch ?(in_switch=false) e =
 	match e.eexpr with
 	| TBreak -> in_switch  (* Found break - return true only if we're inside a switch *)
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		(* Enter switch context - any break in here is "in switch" *)
 		let in_cases = List.exists (fun c -> has_break_in_switch ~in_switch:true c.case_expr) sw.switch_cases in
 		let in_default = match sw.switch_default with

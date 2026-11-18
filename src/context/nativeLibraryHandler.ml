@@ -35,5 +35,7 @@ let add_native_lib com file is_extern = match com.platform with
 			) (Sys.readdir file))
 		else
 			add file
+	| Globals.Cs ->
+		CsLib.add_net_lib com file is_extern
 	| pf ->
 		failwith (Printf.sprintf "Target %s does not support native libraries (trying to load %s)" (platform_name pf) file);

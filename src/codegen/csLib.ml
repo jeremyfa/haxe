@@ -551,7 +551,7 @@ let mk_type_path ctx path params =
 			let nested = List.map netcl_to_hx nested in
 			ns, String.concat "_" nested ^ "_" ^ netcl_to_hx cl
 	in
-	CTPath (make_ptp {
+	CTPath (CsCompat.make_ptp {
 		tpackage = fst (netpath_to_hx ctx.nstd (pack,[],""));
 		tname = name;
 		tparams = params;
@@ -559,7 +559,7 @@ let mk_type_path ctx path params =
 	} null_pos)
 
 let raw_type_path _ctx path params =
-	make_ptp {
+	CsCompat.make_ptp {
 		tpackage = fst path;
 		tname = snd path;
 		tparams = params;
@@ -610,7 +610,7 @@ let rec convert_signature ctx p = function
 		(* Look up pre-computed smart name (with arity stripping) first *)
 		(match Hashtbl.find_opt il_to_hx_path s with
 		| Some hx_path ->
-			CTPath (make_ptp {
+			CTPath (CsCompat.make_ptp {
 				tpackage = fst hx_path;
 				tname = snd hx_path;
 				tparams = params;
@@ -960,8 +960,8 @@ let convert_ilenum ctx p ilcls =
 	let name = netname_to_hx (snd hx_path) in
 	if is_flags then begin
 		let enum_fields = List.map fst fields in
-		let int_type = (CTPath (make_ptp { tpackage = []; tname = "Int"; tparams = []; tsub = None } null_pos), null_pos) in
-		let self_ct = (CTPath (make_ptp { tpackage = fst hx_path; tname = name; tparams = []; tsub = None } null_pos), null_pos) in
+		let int_type = (CTPath (CsCompat.make_ptp { tpackage = []; tname = "Int"; tparams = []; tsub = None } null_pos), null_pos) in
+		let self_ct = (CTPath (CsCompat.make_ptp { tpackage = fst hx_path; tname = name; tparams = []; tsub = None } null_pos), null_pos) in
 		let mk_arg aname = ((aname,null_pos), false, [], Some self_ct, None) in
 		let mk_op_field op_name op_expr =
 			{
@@ -1290,12 +1290,12 @@ let convert_ilclass ctx p ilcls = match ilcls.csuper with
 		(match ilcls.csuper with
 			| Some { snorm = LClass ( (["System"],[],"Object"), [] ) } -> ()
 			| Some ({ snorm = LClass ( (["System"],[],"ValueType"), [] ) } as s) ->
-				flags := HExtends (get_type_path ctx (convert_signature ctx p s.snorm)) :: !flags;
+				flags := HExtends ((get_type_path ctx (convert_signature ctx p s.snorm)),null_pos) :: !flags;
 				meta := (Meta.Struct,[],p) :: !meta
 			| Some { snorm = LClass ( (["haxe";"lang"],[],"HxObject"), [] ) } ->
 				meta := (Meta.HxGen,[],p) :: !meta
 			| Some s ->
-				flags := HExtends (get_type_path ctx (convert_signature ctx p s.snorm)) :: !flags
+				flags := HExtends ((get_type_path ctx (convert_signature ctx p s.snorm)),null_pos) :: !flags
 			| _ -> ());
 
 			let has_explicit_ifaces = ref false in
@@ -1306,9 +1306,9 @@ let convert_ilclass ctx p ilcls = match ilcls.csuper with
 				| i ->
 					if is_explicit ctx ilcls i then has_explicit_ifaces := true;
 					flags := if !is_interface then
-						HExtends (get_type_path ctx (convert_signature ctx p i)) :: !flags
+						HExtends ((get_type_path ctx (convert_signature ctx p i)),null_pos) :: !flags
 					else
-						HImplements (get_type_path ctx (convert_signature ctx p i)) :: !flags
+						HImplements ((get_type_path ctx (convert_signature ctx p i)),null_pos) :: !flags
 			) ilcls.cimplements;
 			if !has_explicit_ifaces && force_check then
 				meta := (Meta.LibType,[],p) :: !meta;
@@ -1317,9 +1317,9 @@ let convert_ilclass ctx p ilcls = match ilcls.csuper with
 			ignore (List.exists (function
 			| { psig = { snorm = LMethod(_,ret,[_v]) } } ->
 				flags := if !is_interface then
-					(HExtends (raw_type_path ctx ([],"ArrayAccess") [ TPType (convert_signature ctx p ret,null_pos) ]) :: !flags)
+					(HExtends ((raw_type_path ctx ([],"ArrayAccess") [ TPType (convert_signature ctx p ret,null_pos) ]),null_pos) :: !flags)
 				else
-					(HImplements (raw_type_path ctx ([],"ArrayAccess") [ TPType (convert_signature ctx p ret,null_pos) ]) :: !flags);
+					(HImplements ((raw_type_path ctx ([],"ArrayAccess") [ TPType (convert_signature ctx p ret,null_pos) ]),null_pos) :: !flags);
 				true
 			| _ -> false) ilcls.cprops);
 
@@ -1554,7 +1554,7 @@ let generate_stub_module path p =
 		d_params = [];
 		d_meta = meta;
 		d_flags = [];
-		d_data = (CTPath (make_ptp { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None } null_pos), null_pos);
+		d_data = (CTPath (CsCompat.make_ptp { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None } null_pos), null_pos);
 	} in
 	(pack, [(decl, p)])
 
@@ -1595,13 +1595,13 @@ let maybe_load_net_std com net_std_base =
 		let dir_rel = Printf.sprintf "%s/%s-%s" base_path net_target net_ver in
 		(* Try to find the directory via class paths *)
 		let found_dir = ref None in
-		com.class_paths#iter (fun cp ->
+		List.iter (fun cp ->
 			if !found_dir = None then begin
-				let dir = cp#path ^ dir_rel in
+				let dir = cp ^ dir_rel in
 				if Sys.file_exists dir && Sys.is_directory dir then
 					found_dir := Some dir
 			end
-		);
+		) com.class_path;
 		match !found_dir with
 		| None -> []
 		| Some dir ->

@@ -76,7 +76,8 @@ class EReg {
 		return {pos: m.Index, len: m.Length};
 	}
 
-	public function matchedNum():Int {
+	// Haxe 5 API, not part of EReg in 4.3
+	function matchedNum():Int {
 		if (m == null || !m.Success)
 			return 0;
 		return m.Groups.Count;

@@ -711,7 +711,10 @@ let patch_constructors tctx =
 							}
 						| _ -> die "" __LOC__
 					)
-				| None -> die "" __LOC__
+				| None ->
+					(* No constructor (on targets with overloads add_constructor does not add one):
+					   the inherited constructor already shifts the stack *)
+					()
 				| _ -> ()
 				)
 			| _ -> ()

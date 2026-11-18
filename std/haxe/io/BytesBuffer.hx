@@ -30,7 +30,7 @@ class BytesBuffer {
 	#elseif cpp
 	var b:BytesData;
 	#elseif cs
-	var b:cs.system.io.MemoryStream;
+	var b:Array<Int>;
 	#elseif java
 	var b:java.io.ByteArrayOutputStream;
 	#elseif python
@@ -50,8 +50,6 @@ class BytesBuffer {
 		b.endian = flash.utils.Endian.LITTLE_ENDIAN;
 		#elseif cpp
 		b = new BytesData();
-		#elseif cs
-		b = new cs.system.io.MemoryStream();
 		#elseif java
 		b = new java.io.ByteArrayOutputStream();
 		#elseif python
@@ -64,8 +62,6 @@ class BytesBuffer {
 	inline function get_length():Int {
 		#if neko
 		return untyped __dollar__ssize(StringBuf.__to_string(b));
-		#elseif cs
-		return haxe.Int64.toInt(b.Length);
 		#elseif java
 		return b.size();
 		#else
@@ -80,8 +76,6 @@ class BytesBuffer {
 		b.writeByte(byte);
 		#elseif cpp
 		b.push(untyped byte);
-		#elseif cs
-		b.WriteByte(cast byte);
 		#elseif java
 		b.write(byte);
 		#elseif python
@@ -96,8 +90,6 @@ class BytesBuffer {
 		untyped StringBuf.__add(b, src.getData());
 		#elseif flash
 		b.writeBytes(src.getData());
-		#elseif cs
-		b.Write(src.getData(), 0, src.length);
 		#elseif java
 		b.write(src.getData(), 0, src.length);
 		#elseif js
@@ -175,8 +167,6 @@ class BytesBuffer {
 		#elseif flash
 		if (len > 0)
 			b.writeBytes(src.getData(), pos, len);
-		#elseif cs
-		b.Write(src.getData(), pos, len);
 		#elseif java
 		b.write(src.getData(), pos, len);
 		#elseif js
@@ -206,9 +196,6 @@ class BytesBuffer {
 			#elseif flash
 			var bytes = new Bytes(b.length, b);
 			b.position = 0;
-			#elseif cs
-			var buf = b.GetBuffer();
-			var bytes = new Bytes(cast b.Length, buf);
 			#elseif java
 			var buf = b.toByteArray();
 			var bytes = new Bytes(buf.length, buf);
@@ -216,6 +203,10 @@ class BytesBuffer {
 			var bytes = new Bytes(b.length, b);
 			#elseif js
 			var bytes = new Bytes(new js.lib.Uint8Array(b).buffer);
+			#elseif cs
+			var data = new cs.NativeArray<cs.UInt8>(b.length);
+			for (i in 0...b.length) data[i] = b[i];
+			var bytes = new Bytes(b.length, data);
 			#else
 			var bytes = new Bytes(b.length, b);
 			#end

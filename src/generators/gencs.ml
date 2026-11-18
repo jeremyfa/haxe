@@ -78,7 +78,7 @@
 open Globals
 open Ast
 open Type
-open Gctx
+open Common
 open CsGlobals
 open CsAst
 open CsTypeMapping
@@ -88,6 +88,7 @@ open CsNullable
 open CsExprAnalysis
 open CsTypeCoercion
 open CsContext
+open CsCompat
 
 (* Common path tuples for pattern matching.
    Type constants (hxvalue_type, runtime_type, etc.) are defined in CsTypeMapping. *)
@@ -111,11 +112,25 @@ let deduplicate_param_names params =
 (* Extract function args and return type from a type that may be Coroutine<TFun>.
    For coroutine types, expands with _hx_continuation param and SuspensionResult return.
    Returns Some (args, ret) if the type is a function (or coroutine function), None otherwise. *)
-let follow_tfun_with_coro basic t =
-	match TFunctions.follow_with_coro t with
-	| TFunctions.Coro (args, ret) -> Some (Common.expand_coro_type basic args ret)
-	| TFunctions.NotCoro (TFun (args, ret)) -> Some (args, ret)
+let follow_tfun_with_coro _basic t =
+	(* Haxe 4.3 has no coroutines: this is a plain function type check *)
+	match follow t with
+	| TFun (args, ret) -> Some (args, ret)
 	| _ -> None
+
+(* Wrap the types of optional arguments in Null<T>. Haxe 5 does this in the
+   shared preprocessor (genshared.ml), the 4.3 one does not, so the C# target
+   does it itself for every class field and constructor. *)
+let rec patch_optional basic cf =
+	List.iter (patch_optional basic) cf.cf_overloads;
+	match follow cf.cf_type with
+	| TFun(args,ret) ->
+		let args = List.map (fun (n,o,t) ->
+			if o && not (is_nullable t) then (n,o,basic.tnull t) else (n,o,t)
+		) args in
+		cf.cf_type <- TFun(args,ret)
+	| _ ->
+		()
 
 (* C#-specific: Patch @:optional field TYPE to use Null<T>.
    Unlike JVM which uses 0 for optional primitives, C# needs Null<T> to preserve null state.
@@ -284,7 +299,7 @@ let is_valid_cs_constraint cs_t =
    Only includes type params that have non-empty valid C# constraints. *)
 let extract_type_param_constraints gctx ttps =
 	List.filter_map (fun ttp ->
-		let constraints = TFunctions.get_constraints ttp in
+		let constraints = get_constraints ttp in
 		if constraints = [] then None
 		else begin
 			let cs_constraints = List.filter_map (fun t ->
@@ -1118,8 +1133,7 @@ let generate_method_closure_ref : (expr_context -> cs_expr option -> bool -> tcl
    Used for field access on type params where C# can't express the constraint. *)
 let get_type_param_constraint t =
 	match follow t with
-	| TInst ({ cl_kind = KTypeParameter ttp }, _) ->
-		let constraints = TFunctions.get_constraints ttp in
+	| TInst ({ cl_kind = KTypeParameter constraints }, _) ->
 		List.find_map (fun ct ->
 			match follow ct with
 			| TInst _ | TAbstract _ -> Some ct
@@ -1185,9 +1199,8 @@ let rec cs_expr_of_texpr ectx e =
 		   Returns Some(element_type) if there's an Array constraint, None otherwise. *)
 		let get_array_constraint_elem_type t =
 			match follow t with
-			| TInst ({ cl_kind = KTypeParameter ttp }, _) ->
+			| TInst ({ cl_kind = KTypeParameter constraints }, _) ->
 				(* Check constraints for Array<T> *)
-				let constraints = TFunctions.get_constraints ttp in
 				List.find_map (fun ct ->
 					match follow ct with
 					| TInst ({ cl_path = ([], "Array") | (["haxe"; "root"], "Array") }, [elem]) -> Some elem
@@ -2998,12 +3011,9 @@ let rec cs_expr_of_texpr ectx e =
 				(* Helper to recursively find matching type params inside generic types like Array<T> *)
 				let rec find_type_param_in_type ttp_name param_t arg_t =
 					(* Unwrap Coroutine<TFun> to TFun for type param matching *)
-					let unwrap_coro t = match TFunctions.follow_with_coro t with
-						| TFunctions.Coro (args, ret) -> TFun (Common.expand_coro_type ectx.gctx.com.basic args ret)
-						| TFunctions.NotCoro t -> t
-					in
+					let unwrap_coro t = follow t in
 					match unwrap_coro param_t, unwrap_coro arg_t with
-					| TInst ({ cl_kind = KTypeParameter ttp2 }, _), _ when ttp2.ttp_name = ttp_name ->
+					| TInst ({ cl_kind = KTypeParameter _; cl_path = (_,ttp2_name) }, _), _ when ttp2_name = ttp_name ->
 						(* Direct type parameter match - unwrap Null<T> if present.
 						   Note: Null<Null<T>> is already flattened by csSignature.ml *)
 						let unwrapped = match follow arg_t with
@@ -3170,7 +3180,7 @@ let rec cs_expr_of_texpr ectx e =
 					(* Check if the type param has a constraint that object wouldn't satisfy.
 					   For intersection constraints like O:{} & T, we get multiple constraint types.
 					   We need to check ALL of them, not just the first one. *)
-					let constraints = TFunctions.get_constraints ttp in
+					let constraints = get_constraints ttp in
 					(* Try to find a type param reference in any constraint *)
 					let rec find_type_param_ref t = match follow t with
 						| TInst ({ cl_kind = KTypeParameter _ } as c, _) ->
@@ -3660,10 +3670,7 @@ let rec cs_expr_of_texpr ectx e =
 				(* Helper to recursively find matching type params inside generic types *)
 				let rec find_type_param_in_type ttp_name param_t arg_t =
 					(* Unwrap Coroutine<TFun> to TFun for type param matching *)
-					let unwrap_coro t = match TFunctions.follow_with_coro t with
-						| TFunctions.Coro (args, ret) -> TFun (Common.expand_coro_type ectx.gctx.com.basic args ret)
-						| TFunctions.NotCoro t -> t
-					in
+					let unwrap_coro t = follow t in
 					(* Use follow_without_null for param_t to preserve Null<> wrappers.
 					   The standard `follow` unwraps Null<T> to T, which breaks matching.
 					   For arg_t, use regular follow since we want to match the actual argument type. *)
@@ -3672,7 +3679,7 @@ let rec cs_expr_of_texpr ectx e =
 					(* Also get the argument type with abstracts followed (for matching param like Array<T> with abstract wrapping Array) *)
 					let arg_t_underlying = Abstract.follow_with_abstracts arg_t in
 					match param_t_f, arg_t_f with
-					| TInst ({ cl_kind = KTypeParameter ttp2 }, _), _ when ttp2.ttp_name = ttp_name ->
+					| TInst ({ cl_kind = KTypeParameter _; cl_path = (_,ttp2_name) }, _), _ when ttp2_name = ttp_name ->
 						(* Direct type parameter match *)
 						let unwrapped = match arg_t_f with
 							| TAbstract ({ a_path = ([], "Null") }, [inner]) ->
@@ -3870,7 +3877,7 @@ let rec cs_expr_of_texpr ectx e =
 					let ttp_opt = List.find_opt (fun ttp -> ttp.ttp_name = param_name) cf.cf_params in
 					begin match ttp_opt with
 					| Some ttp ->
-						let constraints = TFunctions.get_constraints ttp in
+						let constraints = get_constraints ttp in
 						begin match constraints with
 						| first_constraint :: _ ->
 							(* Check if constraint is a reference to another type param in this method.
@@ -3992,7 +3999,7 @@ let rec cs_expr_of_texpr ectx e =
 			if is_return_type_param then begin
 				(* Find which type param position corresponds to the return type *)
 				let ret_param_name = match follow return_type with
-					| TInst ({ cl_kind = KTypeParameter ttp }, _) -> ttp.ttp_name
+					| TInst ({ cl_kind = KTypeParameter _; cl_path = (_,ttp_name) }, _) -> ttp_name
 					| _ -> ""
 				in
 				(* Find the position of this type param in method params *)
@@ -4955,7 +4962,7 @@ let rec cs_expr_of_texpr ectx e =
 			(* Match return type pattern against actual enum type to find param values *)
 			let rec find_type_param_in_type ttp_name param_t arg_t =
 				match follow param_t, follow arg_t with
-				| TInst ({ cl_kind = KTypeParameter ttp2 }, _), _ when ttp2.ttp_name = ttp_name ->
+				| TInst ({ cl_kind = KTypeParameter _; cl_path = (_,ttp2_name) }, _), _ when ttp2_name = ttp_name ->
 					Some arg_t
 				| TInst (c1, tp1_list), TInst (c2, tp2_list) when c1.cl_path = c2.cl_path && List.length tp1_list = List.length tp2_list ->
 					List.fold_left2 (fun acc tp1 tp2 ->
@@ -5016,11 +5023,11 @@ let rec cs_expr_of_texpr ectx e =
 			(* Also check if expression is Null<EnumType> - need to unwrap via .value *)
 			let is_null_wrapper = find_null_in_expr e in
 			let is_extern_enum, is_dynamic = match follow e.etype with
-				| TEnum (en, _) -> has_enum_flag en EnExtern, false
+				| TEnum (en, _) -> en.e_extern, false
 				| TAbstract ({ a_path = ([], "Null") }, [t]) ->
 					(* Null<EnumType> - check inner type *)
 					begin match follow t with
-					| TEnum (en, _) -> has_enum_flag en EnExtern, false
+					| TEnum (en, _) -> en.e_extern, false
 					| TDynamic _ -> false, true
 					| _ -> false, false
 					end
@@ -5047,6 +5054,9 @@ let rec cs_expr_of_texpr ectx e =
 		CsDefault cs_type
 	| TIdent s ->
 		CsLocal (escape_identifier s)
+	| TFor _ ->
+		(* only in Haxe 4.3, the filters replace it with a while loop *)
+		die "" __LOC__
 
 (* Helper to wrap a statement-as-expression in an immediately invoked lambda.
    Used for TIf, TSwitch, TTry, TWhile when they appear in expression context.
@@ -5096,7 +5106,8 @@ and cs_stmt_with_return_inner ectx is_void ret_cs_type e =
 		let then_body = cs_stmt_with_return_inner ectx is_void ret_cs_type e_then in
 		let else_body = Option.map (cs_stmt_with_return_inner ectx is_void ret_cs_type) e_else_opt in
 		CsIf (cond_cs, then_body, else_body)
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		let switch_expr = cs_expr_of_texpr ectx sw.switch_subject in
 		let cs_sections = List.map (fun case ->
 			let cs_labels = List.map (fun v -> CsCaseConst (cs_expr_of_texpr ectx v)) case.case_patterns in
@@ -5164,7 +5175,8 @@ and cs_stmt_with_result_assign ectx is_void result_var result_type e =
 		let then_body = cs_stmt_with_result_assign ectx is_void result_var result_type e_then in
 		let else_body = Option.map (cs_stmt_with_result_assign ectx is_void result_var result_type) e_else_opt in
 		CsIf (cond_cs, then_body, else_body)
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		let switch_expr = cs_expr_of_texpr ectx sw.switch_subject in
 		let cs_sections = List.map (fun case ->
 			let cs_labels = List.map (fun v -> CsCaseConst (cs_expr_of_texpr ectx v)) case.case_patterns in
@@ -5584,7 +5596,8 @@ and cs_stmt_of_texpr ectx e =
 			let body_cs = cs_stmt_of_texpr ectx body in
 			CsDoWhile (body_cs, cond_cs)
 		end
-	| TSwitch sw ->
+	| TSwitch (sw_subject,sw_cases,sw_default) ->
+		let sw = tswitch sw_subject sw_cases sw_default in
 		(* Check if any case patterns are non-constant expressions - these can't be used in C# switch cases
 		   Non-constant includes: typeof, static field access on non-enum classes, etc. *)
 		let rec is_non_constant_pattern p =
@@ -8426,8 +8439,8 @@ let rec extends_haxe_object c =
    In JIT mode (default): only method closure cases in _hx_getField, skip _hx_setField/_hx_getFields
    (base class HaxeObject handles field access via C# reflection). *)
 let generate_field_accessors gctx c =
-	let is_aot = Gctx.defined gctx.com DefineList.CsAot in
-	let closure_cache = Gctx.defined gctx.com DefineList.CsClosureCache in
+	let is_aot = Common.defined gctx.com DefineList.CsAot in
+	let closure_cache = Common.defined gctx.com DefineList.CsClosureCache in
 	(* Only generate field accessors if the class inherits from HaxeObject *)
 	if not (extends_haxe_object c) then
 		[]
@@ -8721,8 +8734,8 @@ let generate_field_accessors gctx c =
    Returns list of members to add to the class.
    Also records the class path in gctx.all_haxe_classes for Program.cs bind calls. *)
 let generate_static_field_accessors gctx c =
-	let is_aot = Gctx.defined gctx.com DefineList.CsAot in
-	let closure_cache = Gctx.defined gctx.com DefineList.CsClosureCache in
+	let is_aot = Common.defined gctx.com DefineList.CsAot in
+	let closure_cache = Common.defined gctx.com DefineList.CsClosureCache in
 	(* Skip static reflection generation for classes marked @:unreflective *)
 	if Meta.has Meta.Unreflective c.cl_meta then
 		[]
@@ -9605,7 +9618,7 @@ let generate_class gctx c =
 	   mechanism, which handles all interface method signature mismatches uniformly. *)
 
 	(* Generate static constructor if there's __init__ code *)
-	let class_init_stmts = match TClass.get_cl_init c with
+	let class_init_stmts = match c.cl_init with
 		| Some e ->
 			let ectx = create_expr_context gctx in
 			ectx.current_class_path <- Some c.cl_path;
@@ -9755,7 +9768,7 @@ let generate_interface gctx c =
 	   Since C# interfaces can't have static methods, we can't add _hx_bind() directly.
 	   Instead, we store the names here and emit registration code in Program.cs.
 	   Only needed in AOT mode — in JIT mode, Type.getInstanceFields uses C# reflection. *)
-	if Gctx.defined gctx.com DefineList.CsAot then begin
+	if Common.defined gctx.com DefineList.CsAot then begin
 		let interface_field_names = List.filter_map (fun cf ->
 			match cf.cf_kind with
 			| Var { v_read = AccNormal; v_write = AccNormal }
@@ -10338,7 +10351,7 @@ let generate_type gctx mt =
 		Some (generate_class gctx c)
 	| TClassDecl c ->
 		Some (generate_interface gctx c)
-	| TEnumDecl e when has_enum_flag e EnExtern ->
+	| TEnumDecl e when e.e_extern ->
 		(* Skip extern enums *)
 		None
 	| TEnumDecl e ->
@@ -10374,6 +10387,10 @@ let generate com =
 	List.iter (fun mt ->
 		match mt with
 		| TClassDecl c when not (has_class_flag c CInterface) ->
+			(* Haxe 5 patches the optional arguments in preprocess_class *)
+			List.iter (patch_optional com.basic) c.cl_ordered_statics;
+			List.iter (patch_optional com.basic) c.cl_ordered_fields;
+			Option.may (patch_optional com.basic) c.cl_constructor;
 			(* Full preprocessing for classes *)
 			gctx.preprocessor#preprocess_class c;
 			(* C#-specific: Patch @:optional field types to use Null<T> *)
@@ -10428,7 +10445,7 @@ let generate com =
 	) files;
 
 	(* Generate Program.cs with Main entry point if we have an entry point *)
-	begin match Gctx.get_entry_point com with
+	begin match Common.get_entry_point com with
 	| Some (_, entry_class, _) ->
 		let main_class_path = cs_path_of_path entry_class.cl_path in
 		(* Check if haxe.EntryPoint exists (needed for EventLoop support) *)
@@ -10527,7 +10544,7 @@ public static class HaxeReflectionInit
 	end;
 
 	(* Copy runtime support files from std/cs/_cs/ *)
-	let find_file f = (com.class_paths#find_file f).file in
+	let find_file f = Common.find_file com f in
 	let copy_runtime_file src_path dest_path =
 		let content = Std.input_file ~bin:true (find_file src_path) in
 		write_file com.file dest_path content;
@@ -10553,7 +10570,7 @@ public static class HaxeReflectionInit
 
 	(* Generate .csproj — imports Sources.props, target framework overridable via -D cs.net-framework=net9.0 *)
 	let target_framework =
-		Gctx.defined_value_safe ~default:"net8.0" com DefineList.CsNetFramework
+		Common.defined_value_safe ~default:"net8.0" com DefineList.CsNetFramework
 	in
 	let proj = {
 		proj_name = "HaxeProject";

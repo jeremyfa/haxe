@@ -120,8 +120,4 @@ class ObjectMap<K:{}, V> implements haxe.Constraints.IMap<K, V> {
 	public function clear():Void {
 		dict.Clear();
 	}
-
-	public inline function size():Int {
-		return dict.Count;
-	}
 }

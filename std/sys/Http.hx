@@ -106,6 +106,8 @@ class Http extends haxe.http.HttpBase {
 				sock = new java.net.SslSocket();
 				#elseif python
 				sock = new python.net.SslSocket();
+				#elseif cs
+				sock = new cs.net.SslSocket();
 				#elseif (!no_ssl && (hxssl || hl || cpp || (neko && !(macro || interp) || eval) || (lua && !lua_vanilla)))
 				sock = new sys.ssl.Socket();
 				#elseif (neko || cpp)

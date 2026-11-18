@@ -55,7 +55,8 @@ class StringBuf {
 		}
 	}
 
-	public inline function clear():Void {
+	// Haxe 5 API, not part of StringBuf in 4.3
+	inline function clear():Void {
 		b = new StringBuilder();
 	}
 

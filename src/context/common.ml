@@ -683,20 +683,15 @@ let get_config com =
 			pf_this_before_super = false;
 			pf_exceptions = { default_config.pf_exceptions with
 				ec_native_throws = [
-					["cs";"system"],"Exception";
+					["cs"],"Exception";
 					["haxe"],"Exception";
 				];
 				ec_native_catches = [
-					["cs";"system"],"Exception";
+					["cs"],"Exception";
 					["haxe"],"Exception";
 				];
-				ec_wildcard_catch = (["cs";"system"],"Exception");
-				ec_base_throw = (["cs";"system"],"Exception");
-				ec_special_throw = fun e -> e.eexpr = TIdent "__rethrow__"
-			};
-			pf_scoping = {
-				vs_scope = FunctionScope;
-				vs_flags = [NoShadowing]
+				ec_wildcard_catch = (["cs"],"Exception");
+				ec_base_throw = (["cs"],"Exception");
 			};
 			pf_supports_atomics = true;
 		}

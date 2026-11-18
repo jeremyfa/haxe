@@ -35,7 +35,7 @@ open Genshared
 
 (* Generation context - holds state for the entire code generation pass *)
 type gen_context = {
-	com : Gctx.t;
+	com : Common.context;
 	mutable generated_types : cs_type_def list;
 	mutable closures_by_class : (path * cs_type_def list) list;
 	mutable closure_count : int;

@@ -565,8 +565,8 @@ class Main {
 		t(str.indexOf("one") >= 0);
 		t(str.indexOf("=>") >= 0);
 
-		// Test size()
-		eq(3, copied.size());
+		// Count the keys (Map has no size() in Haxe 4.3)
+		eq(3, [for (k in copied.keys()) k].length);
 
 		// Test keyValueIterator()
 		var kvCount = 0;
@@ -582,7 +582,7 @@ class Main {
 		f(map.exists("one"));
 		f(map.exists("three"));
 		f(map.exists("two"));
-		eq(0, map.size());
+		eq(0, [for (k in map.keys()) k].length);
 	}
 
 	static function testLambdas() {

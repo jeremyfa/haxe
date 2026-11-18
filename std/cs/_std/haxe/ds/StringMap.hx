@@ -120,8 +120,4 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	public function clear():Void {
 		dict.Clear();
 	}
-
-	public inline function size():Int {
-		return dict.Count;
-	}
 }

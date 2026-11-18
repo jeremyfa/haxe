@@ -404,7 +404,8 @@ class Reflect {
 		return cast dst;
 	}
 
-	public static function makeVarArgs<T>(f:Array<Dynamic>->T):Dynamic {
+	@:overload(function(f:Array<Dynamic>->Void):Dynamic {})
+	public static function makeVarArgs(f:Array<Dynamic>->Dynamic):Dynamic {
 		return new VarArgsFunction(f);
 	}
 

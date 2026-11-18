@@ -25,7 +25,7 @@ package haxe;
 @:coreApi
 class Exception extends NativeException {
 	public var message(get, never):String;
-	public var stack(get, set):CallStack;
+	public var stack(get, never):CallStack;
 	public var previous(get, never):Null<Exception>;
 	public var native(get, never):Any;
 
@@ -130,11 +130,6 @@ class Exception extends NativeException {
 			}
 		}
 		return __exceptionStack;
-	}
-
-	function set_stack(stack:CallStack):CallStack {
-		__exceptionStack = stack;
-		return stack;
 	}
 }
 

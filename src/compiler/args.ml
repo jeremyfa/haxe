@@ -60,6 +60,8 @@ let parse_args com =
 		raise_usage = (fun () -> ());
 		display_arg = None;
 		deprecations = [];
+		net_doc_file = None;
+		net_std_path = None;
 	} in
 	let add_deprecation s =
 		actx.deprecations <- s :: actx.deprecations
@@ -81,8 +83,8 @@ let parse_args com =
 			Common.define com Define.Cppia;
 			set_platform com Cpp file;
 		),"<file>","generate Cppia bytecode into target file");
-		("Target",["--cs"],["-cs"],Arg.String (fun _ ->
-			raise (Arg.Bad "The C# target is being replaced and is not available in this build")
+		("Target",["--cs"],["-cs"],Arg.String (fun dir ->
+			set_platform com Cs dir;
 		),"<directory>","generate C# code into target directory");
 		("Target",["--java"],["-java"],Arg.String (fun _ ->
 			raise (Arg.Bad "The Java source target was removed: use --jvm <file.jar> to generate JVM bytecode")
@@ -213,7 +215,17 @@ let parse_args com =
 		),"<file>","use an external JAR or directory of JAR files for type checking");
 		("Target-specific",["--net-lib"],["-net-lib"],Arg.String (fun file ->
 			add_native_lib file false;
-		),"<file>[@std]","add an external .NET DLL file");
+		),"<file>","add an external .NET DLL for type checking");
+		("Target-specific",["--net-lib-extern"],[],Arg.String (fun file ->
+			add_native_lib file true;
+		),"<file>","use an external .NET DLL for type checking");
+		("Target-specific",["--net-doc"],[],Arg.String (fun file ->
+			actx.net_doc_file <- Some file;
+			actx.did_something <- true;
+		),"<file>","generate .hxdoc binary cache from a .NET XML doc file");
+		("Target-specific",["--net-std"],[],Arg.String (fun path ->
+			actx.net_std_path <- Some path;
+		),"<path>","set the .NET standard library lookup folder (default: netlib)");
 		("Compilation",["-r";"--resource"],["-resource"],Arg.String (fun res ->
 			let file, name = (match ExtString.String.nsplit res "@" with
 				| [file; name] -> file, name
