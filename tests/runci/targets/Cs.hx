@@ -39,22 +39,15 @@ class Cs {
 		return 'bin/aot/Project$ext';
 	}
 
-	// Create Project.aot.csproj file for AOT compilation. It imports Sources.props like the
-	// generated Project.csproj, so that only the files of the last compilation are built.
+	// Create Project.aot.csproj file for AOT compilation: the generated Project.csproj
+	// (with Sources.props and the references of --net-lib) plus the AOT properties
 	static function createAotProjectFile():Void {
-		sys.io.File.saveContent("Project.aot.csproj", '<Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="Sources.props" />
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>Project</AssemblyName>
-    <ImplicitUsings>disable</ImplicitUsings>
-    <Nullable>disable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishAot>true</PublishAot>
-    <TrimmerSingleWarn>false</TrimmerSingleWarn>
-  </PropertyGroup>
-</Project>');
+		var project = sys.io.File.getContent("Project.csproj");
+		var aot = "    <AssemblyName>Project</AssemblyName>\n"
+			+ "    <PublishAot>true</PublishAot>\n"
+			+ "    <TrimmerSingleWarn>false</TrimmerSingleWarn>\n"
+			+ "  </PropertyGroup>";
+		sys.io.File.saveContent("Project.aot.csproj", StringTools.replace(project, "  </PropertyGroup>", aot));
 	}
 
 	// Run AOT test for a compiled C# project in the current directory
@@ -157,6 +150,10 @@ class Cs {
 		changeDirectory("bin");
 		infoMsg("=== Running Bootstrap Tests (AOT) ===");
 		runAotTest();
+
+		// === Misc Tests (projects) ===
+		changeDirectory(miscCsDir);
+		runCommand("haxe", ["run.hxml"]);
 
 		// === Sys Tests ===
 		// JIT

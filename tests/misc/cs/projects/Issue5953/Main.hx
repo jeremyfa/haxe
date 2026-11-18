@@ -14,4 +14,4 @@ abstract NativeStringMap<V>(Impl<V>) {
 	}
 }
 
-typedef Impl<V> = cs.system.collections.generic.IDictionary_2<String, V>;
+typedef Impl<V> = cs.system.collections.generic.IDictionary<String, V>;

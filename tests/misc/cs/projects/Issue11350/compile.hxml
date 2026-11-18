@@ -1,3 +1,4 @@
 --main Main
 -cs bin
--D net-ver=45
+-lib hxcs
+--cmd dotnet build bin/Project.csproj -nodeReuse:false -p:UseSharedCompilation=false

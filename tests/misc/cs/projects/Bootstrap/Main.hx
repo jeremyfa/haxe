@@ -67,6 +67,7 @@ class Main {
 		testSerialization();
 		testBreakInSwitchInLoop();
 		testVoidTypeParam();
+		testExceptionSubclasses();
 		#if hxcoro
 		CoroutineTests.run();
 		#end
@@ -1945,6 +1946,35 @@ class Main {
 
 	static function runFunc<T>(f:() -> T):T {
 		return f();
+	}
+
+	static function testExceptionSubclasses() {
+		// Subclasses of haxe.Exception without a constructor of their own, and a constructor
+		// with fewer arguments further down (from the review of the Haxe 5 C# target)
+		var e = new ExceptionGrandChild();
+		eq("custom", e.message);
+		t(e.stack != null);
+		var e = new ExceptionChild("child");
+		eq("child", e.message);
+		t(e.stack != null);
+		var e = new ExceptionBase("base");
+		eq("base", e.message);
+		t(e.stack != null);
+		try {
+			throw new ExceptionGrandChild();
+		} catch (e:ExceptionBase) {
+			eq("custom", e.message);
+		}
+	}
+}
+
+class ExceptionBase extends haxe.Exception {}
+
+class ExceptionChild extends ExceptionBase {}
+
+class ExceptionGrandChild extends ExceptionChild {
+	public function new() {
+		super("custom");
 	}
 }
 

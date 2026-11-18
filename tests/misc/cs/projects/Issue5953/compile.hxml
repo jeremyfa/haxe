@@ -1,3 +1,4 @@
 -main Main
-Reduced
 -cs bin
+-lib hxcs
+--cmd dotnet build bin/Project.csproj -nodeReuse:false -p:UseSharedCompilation=false
