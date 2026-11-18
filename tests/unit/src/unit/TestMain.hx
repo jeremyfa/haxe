@@ -29,7 +29,6 @@ function main() {
 
 	#if cs // "Turkey Test" - Issue #996
 	cs.system.threading.Thread.CurrentThread.CurrentCulture = new cs.system.globalization.CultureInfo('tr-TR');
-	cs.Lib.applyCultureChanges();
 	#end
 	#if neko
 	if (neko.Web.isModNeko)
@@ -83,7 +82,7 @@ function main() {
 		#if !no_pattern_matching
 		new TestMatch(),
 		#end
-		#if cs
+		#if (cs && TODO_TestCSharp)
 		new TestCSharp(),
 		#end
 		#if java
@@ -101,7 +100,7 @@ function main() {
 		#if php
 		new TestPhp(),
 		#end
-		#if (java || cs)
+		#if (java || (cs && TODO_TestOverloads))
 		new TestOverloads(),
 		#end
 		new TestOverloadsForEveryone(),

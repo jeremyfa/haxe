@@ -150,13 +150,16 @@ let strip_backtick_arity name =
 	| None -> name
 
 (** Convert ilpath to C#-friendly dotted notation for @:native metadata.
-    Strips backtick arity suffixes since they are IL notation, not valid C#. *)
+    Strips backtick arity suffixes since they are IL notation, not valid C#, except
+    on the enclosing types of a nested type: a nested type gets the type parameters
+    of its enclosing types (Dictionary`2+Enumerator has 2), and the printer needs the
+    arity of each enclosing type to write Dictionary<K, V>.Enumerator. *)
 let ilpath_to_cs = function
 	| ns,[], name -> s_type_path (ns, strip_backtick_arity name)
 	| [],nested,name ->
-		String.concat "." (List.map strip_backtick_arity nested) ^ "." ^ strip_backtick_arity name
+		String.concat "." nested ^ "." ^ strip_backtick_arity name
 	| ns, nested, name ->
-		String.concat "." ns ^ "." ^ String.concat "." (List.map strip_backtick_arity nested) ^ "." ^ strip_backtick_arity name
+		String.concat "." ns ^ "." ^ String.concat "." nested ^ "." ^ strip_backtick_arity name
 
 let is_haxe_keyword = function
 	| "cast" | "extern" | "function" | "in" | "typedef" | "using" | "var" | "untyped" | "inline" -> true

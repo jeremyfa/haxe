@@ -143,6 +143,31 @@ let rec s_cs_type = function
 	| CsTypeArray (t, Some rank) ->
 		s_cs_type t ^ "[" ^ String.make (rank - 1) ',' ^ "]"
 	| CsTypeClass (([], name), []) -> name
+	| CsTypeClass ((pack, name), params) when List.exists (fun s -> String.contains s '`') pack ->
+		(* .NET nested type of a generic type (see ilpath_to_cs in csLib): the enclosing
+		   segments carry their arity, e.g. Dictionary`2.Enumerator<int, string> is
+		   written Dictionary<int, string>.Enumerator *)
+		let split s = match String.index_opt s '`' with
+			| Some i -> String.sub s 0 i, int_of_string (String.sub s (i + 1) (String.length s - i - 1))
+			| None -> s, 0
+		in
+		let with_params name params = match params with
+			| [] -> name
+			| _ -> name ^ "<" ^ String.concat ", " (List.map s_cs_type params) ^ ">"
+		in
+		let rec take n l = if n <= 0 then [], l else match l with
+			| x :: l -> let a, b = take (n - 1) l in x :: a, b
+			| [] -> [], []
+		in
+		let rec loop segs params = match segs with
+			| [] -> [with_params name params]
+			| s :: segs ->
+				let s, arity = split s in
+				(* without type arguments (e.g. static access), print the bare names *)
+				let own, rest = if params = [] then [], [] else take arity params in
+				with_params s own :: loop segs rest
+		in
+		"global::" ^ String.concat "." (loop pack params)
 	| CsTypeClass ((pack, name), []) ->
 		(* Use global:: prefix to avoid namespace conflicts.
 		   This ensures haxe.lang.HaxeObject is always the global namespace path,

@@ -2,11 +2,11 @@ package unit.issues;
 
 class Issue8978 extends unit.Test {
 #if cs
-	var classField:cs.types.Int64 = 1;
-	var anon:{field:cs.types.Int64} = {field:1};
+	var classField:cs.Int64 = 1;
+	var anon:{field:cs.Int64} = {field:1};
 
 	function test() {
-		var local:cs.types.Int64 = 1;
+		var local:cs.Int64 = 1;
 		var shift = 1;
 
 		classField <<= shift;

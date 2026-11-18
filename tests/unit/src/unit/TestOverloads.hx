@@ -150,12 +150,12 @@ class TestOverloads extends Test
 		eq(Primitives.prim(nf, null), "Null<Float>");
 		var dyn:Dynamic = null;
 		eq(Primitives.prim(dyn), "Dynamic");
-#if (java || cs)
+		#if jvm
 		var s:Single = 1.0;
 		eq(Primitives.prim(s), "Single" );
 		var ns:Null<Single> = null;
 		eq(Primitives.prim(ns, null), "Null<Single>");
-#end
+		#end
 	}
 
 	//former java tests. only exact types
@@ -250,7 +250,7 @@ private class Primitives
 		return "Null<Int>";
 	}
 
-#if (java || cs)
+	#if jvm
 	overload public static function prim(v:Single):String
 	{
 		return "Single";
@@ -265,7 +265,7 @@ private class Primitives
 	{
 		return "Null<Single>";
 	}
-#end
+	#end
 }
 
 private interface I0

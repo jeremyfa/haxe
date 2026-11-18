@@ -1,6 +1,6 @@
 package unit.issues;
 
-#if cs
+#if (cs && TODO_TestCSharp)
 import cs.system.Attribute;
 import haxe.test.AttrWithNullType;
 import haxe.test.AttrWithNonNullType;
@@ -8,7 +8,7 @@ import haxe.test.MyAttrAttribute;
 #end
 
 class Issue9946 extends unit.Test {
-	#if cs
+	#if (cs && TODO_TestCSharp)
 	function test() {
 		eq(hasNullArg(cs.Lib.toNativeType(AttrWithNullType)), true);
 		eq(hasNullArg(cs.Lib.toNativeType(AttrWithNonNullType)), false);

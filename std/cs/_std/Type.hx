@@ -27,7 +27,6 @@ import cs.HaxeObject;
 enum ValueType {
 	TNull;
 	TInt;
-	TInt64;
 	TFloat;
 	TBool;
 	TObject;
@@ -323,9 +322,10 @@ class Type {
 		// Check for int
 		if (Std.isOfType(v, Int))
 			return TInt;
-		// Check for Int64 (before Float, since Float's isOfType returns true for long)
+		// Int64 (before Float, since Float's isOfType returns true for long). Haxe 4.3 has
+		// no TInt64: like the previous C# target, it is a class value of System.Int64
 		if (cs.Syntax.code("{0} is long", v))
-			return TInt64;
+			return TClass(cs.Syntax.code("typeof(long)"));
 		// Check for float
 		if (Std.isOfType(v, Float))
 			return TFloat;

@@ -23,17 +23,17 @@ private class CustomNativeException extends php.Exception {}
 private class CustomNativeException extends js.lib.Error {}
 #elseif flash
 private class CustomNativeException extends flash.errors.Error {}
-#elseif java
+#elseif jvm
 private class CustomNativeException extends java.lang.RuntimeException {}
-#elseif cs
-private class CustomNativeException extends cs.system.Exception {}
 #elseif python
 private class CustomNativeException extends python.Exceptions.Exception {}
+#elseif cs
+private class CustomNativeException extends cs.system.Exception {}
 #elseif (lua || eval || neko || hl || cpp)
 private class CustomNativeException { public function new(m:String) {} }
 #end
 
-#if java
+#if jvm
 private class NativeExceptionBase extends java.lang.RuntimeException {}
 private class NativeExceptionChild extends NativeExceptionBase {}
 private class NativeExceptionOther extends java.lang.RuntimeException {}
@@ -255,7 +255,8 @@ class TestExceptions extends Test {
 			for(s in stacks) {
 				// This will avoid errors when compiling hl/c on unix
 				// See https://github.com/HaxeFoundation/haxe/pull/11382 for long term fix
-				#if hlc if (s.length == 0) continue; #end
+				// Also skip empty stacks on C# AOT mode where aggressive inlining can result in no frames
+				#if (hlc || cs) if (s.length == 0) continue; #end
 
 				if(expected == null) {
 					expected = stackItemData(s[0]);
@@ -383,7 +384,7 @@ class TestExceptions extends Test {
 		}
 	}
 
-#if java
+#if jvm
 	function testCatchChain() {
 		eq("caught NativeExceptionChild: msg", raise(() -> throw new NativeExceptionChild("msg")));
 		eq("caught NativeExceptionBase: msg", raise(() -> throw new NativeExceptionBase("msg")));

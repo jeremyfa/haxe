@@ -9,7 +9,7 @@ class Issue3558 extends Test
 #if cs
 	public function test()
 	{
-		var dict = new Dictionary_2<Int,String>();
+		var dict = new Dictionary<Int,String>();
 		dict[10] = "11";
 		var e:IDictionaryEnumerator = dict.GetEnumerator();
 		while (e.MoveNext())

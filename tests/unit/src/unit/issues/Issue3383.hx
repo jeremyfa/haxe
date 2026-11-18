@@ -11,7 +11,6 @@ class Issue3383 extends Test {
 				ui:UInt = cast null,
 				n:cs.system.Nullable_1<Int> = null;
 
-			#if !(erase_generics && !fast_cast)
 			eq(i, cast null);
 			eq(f, cast null);
 			eq(s, cast null);
@@ -19,10 +18,6 @@ class Issue3383 extends Test {
 			eq(span, null);
 			eq(ui, cast null);
 			eq(n, null);
-			#else
-			Sys.stderr().writeString("https://github.com/HaxeFoundation/haxe/issues/5503 pending\n");
-			noAssert();
-			#end
 	}
 #end
 }

@@ -539,9 +539,26 @@ let field_access_returns_erased_type_param e =
 		is_erased_type_param cf.cf_type
 	| _ -> false
 
-(* Check if an expression returns an erased type parameter (method call or field access) *)
+(* Check if an array access reads a native array whose element type is an erased type
+   parameter: a field declared as cs.NativeArray<T> is an object[] in C#. *)
+let array_access_returns_erased_type_param e =
+	match e.eexpr with
+	| TArray (e1, _) ->
+		begin match e1.eexpr with
+		| TField (_, FInstance (_, _, cf)) | TField (_, FStatic (_, cf)) | TField (_, FAnon cf) ->
+			begin match follow cf.cf_type with
+			| TInst ({ cl_path = (["cs"], "NativeArray") }, [et]) -> is_erased_type_param et
+			| _ -> false
+			end
+		| _ -> false
+		end
+	| _ -> false
+
+(* Check if an expression returns an erased type parameter (method call, field access
+   or native array access) *)
 let expr_returns_erased_type_param e =
 	method_call_returns_erased_type_param e || field_access_returns_erased_type_param e
+	|| array_access_returns_erased_type_param e
 
 (* SINGLE SOURCE OF TRUTH: This is the ONLY place that decides .value and .hasValue behavior.
 
@@ -1772,6 +1789,12 @@ let rec cs_expr_of_texpr ectx e =
 							let result = cast_object_to_type expected_cs_type helper_call in
 							wrap_call_with_prefix [var_decl] expected_cs_type result
 						end
+					| None when is_pure_expr obj_expr ->
+						(* No helper for this operator (shifts, bitwise ops...): the field access
+						   is a runtime call that cannot be assigned to, so generate it as
+						   e1 = e1 <op> e2, which goes through the dynamic field assignment *)
+						let value = { e1 with eexpr = TBinop (inner_op, e1, e2) } in
+						cs_expr_of_texpr ectx { e with eexpr = TBinop (OpAssign, e1, value) }
 					| None ->
 						(* Unsupported compound op on dynamic field - fall back to regular handling *)
 						let e1_cs = cs_expr_of_texpr ectx e1 in
@@ -6130,7 +6153,12 @@ let generate_closure_class ectx tf func_type =
 		return_type = Some tf.tf_type;
 		current_class_path = Some closure_path;
 		current_method_name = Some "invoke";
-		origin_class_path = ectx.origin_class_path;  (* Inherit from parent for nested closures *)
+		(* Inherit from parent for nested closures. When the parent context has no origin
+		   (e.g. the initializer of a dynamic method), its own class is the origin: the
+		   closure's path is not a class written to a file. *)
+		origin_class_path = (match ectx.origin_class_path with
+			| Some _ as p -> p
+			| None -> ectx.current_class_path);
 		captured_vars = List.map (fun v -> v.v_id) captured_vars;
 		captures_this = accesses_this;
 		type_params_in_scope = closure_type_params_in_scope;  (* Closure's own params + inherited *)
