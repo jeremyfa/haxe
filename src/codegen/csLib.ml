@@ -1284,7 +1284,7 @@ let normalize_ilcls ctx cls =
 
 (* --- Main class conversion --- *)
 
-let convert_ilclass ctx p ilcls = match ilcls.csuper with
+let convert_ilclass ctx p ?(delegate=false) ilcls = match ilcls.csuper with
 	| Some { snorm = LClass ((["System"],[],"Enum"), []) } ->
 		convert_ilenum ctx p ilcls
 	| _ ->
@@ -1385,13 +1385,100 @@ let convert_ilclass ctx p ilcls = match ilcls.csuper with
 				| None -> netpath_to_hx ctx.nstd ilcls.cpath
 			) in
 			EClass {
-				d_name = netname_to_hx c,null_pos;
+				(* the class of a delegate is the underlying type of the abstract that has its name (see convert_delegate) *)
+				d_name = (if delegate then "Delegate_" else "") ^ netname_to_hx c,null_pos;
 				d_doc = lookup_type_doc ctx ilcls.cpath;
 				d_params = params;
 				d_meta = !meta;
 				d_flags = !flags;
 				d_data = !fields;
 			}
+
+(* --- Delegates --- *)
+
+(* A .NET delegate type D is an abstract over its extern class (named Delegate_D):
+   - new D(f) and the implicit conversion from a Haxe function of the signature of
+     D.Invoke create a delegate that calls the function (__delegate__, see gencs)
+   - d1 + d2 and d1 - d2 combine and remove delegates, like in C# *)
+let convert_delegate ctx p ilcls =
+	let p = { p with pfile = p.pfile ^ " (abstract delegate)" } in
+	let hx_pack, hx_name = (match Hashtbl.find_opt il_to_hx_path ilcls.cpath with
+		| Some p -> p
+		| None -> netpath_to_hx ctx.nstd ilcls.cpath
+	) in
+	let name = netname_to_hx hx_name in
+	let types = List.map (fun t -> {
+		tp_name = ("T" ^ string_of_int t.tnumber),null_pos;
+		tp_params = [];
+		tp_constraints = None;
+		tp_default = None;
+		tp_meta = [];
+	}) ilcls.ctypes in
+	let params = List.map (fun t ->
+		TPType (CTPath (CsCompat.make_ptp { tpackage = []; tname = fst t.tp_name; tparams = []; tsub = None } null_pos),null_pos)
+	) types in
+	(* both types are in the module of the delegate, or of its outermost enclosing type *)
+	let type_ref type_name = match nested_type_path ctx ilcls.cpath type_name params with
+		| Some ct -> ct
+		| None -> CTPath (CsCompat.make_ptp {
+			tpackage = hx_pack;
+			tname = name;
+			tparams = params;
+			tsub = if type_name = name then None else Some type_name;
+		} null_pos)
+	in
+	let abs_type = type_ref name in
+	let underlying_type = type_ref ("Delegate_" ^ name) in
+	let invoke = List.find (fun m -> m.mname = "Invoke") ilcls.cmethods in
+	let haxe_type = CTFunction (
+		List.map (fun (_,_,s) -> (match s.snorm with
+			| LManagedPointer s -> mk_type_path ctx (["cs"],[],"Ref") [ TPType (convert_signature ctx p s,null_pos) ]
+			| s -> convert_signature ctx p s),null_pos) invoke.margs,
+		(convert_signature ctx p invoke.mret.snorm,null_pos)
+	) in
+	let ident s = (EConst (Ident s),p) in
+	(* untyped call to a generator builtin; the last argument only carries the delegate type *)
+	let special name args =
+		(ECast ((EUntyped (ECall (ident name, args @ [ECheckType (ident "null", (abs_type,null_pos)),p]),p),p), None),p)
+	in
+	let field fname meta access kind = {
+		cff_name = fname,null_pos;
+		cff_doc = None;
+		cff_pos = p;
+		cff_meta = meta;
+		cff_access = List.map (fun a -> a,null_pos) access;
+		cff_kind = kind;
+	} in
+	let hxfunc_arg = ("hxfunc",null_pos),false,[],Some (haxe_type,null_pos),None in
+	let fn_new = field "new" [] [APublic;AInline;AExtern] (FFun {
+		f_params = [];
+		f_args = [hxfunc_arg];
+		f_type = None;
+		f_expr = Some (EBinop (OpAssign, ident "this", special "__delegate__" [ident "hxfunc"]),p);
+	}) in
+	let fn_from = field "FromHaxeFunction" [Meta.From,[],p] [APublic;AInline;AStatic;AExtern] (FFun {
+		f_params = types;
+		f_args = [hxfunc_arg];
+		f_type = Some (abs_type,null_pos);
+		f_expr = Some (EReturn (Some (special "__delegate__" [ident "hxfunc"])),p);
+	}) in
+	let op binop fname builtin = field fname [Meta.Op,[EBinop (binop, ident "A", ident "B"),p],p] [APublic;AInline;AStatic;AExtern] (FFun {
+		f_params = types;
+		f_args = [
+			("arg1",null_pos),false,[],Some (abs_type,null_pos),None;
+			("arg2",null_pos),false,[],Some (abs_type,null_pos),None;
+		];
+		f_type = Some (abs_type,null_pos);
+		f_expr = Some (EReturn (Some (special builtin [ident "arg1"; ident "arg2"])),p);
+	}) in
+	EAbstract {
+		d_name = name,null_pos;
+		d_doc = lookup_type_doc ctx ilcls.cpath;
+		d_params = types;
+		d_meta = [Meta.Custom ":delegate",[],p; Meta.Forward,[],p];
+		d_flags = [AbOver (underlying_type,null_pos)];
+		d_data = [fn_new; fn_from; op OpAdd "Add" "__delegate_combine__"; op OpSub "Remove" "__delegate_remove__"];
+	}
 
 (* --- DLL type reference collection for stub generation --- *)
 
@@ -1524,8 +1611,9 @@ class net_library com name file_path std = object(self)
 			| Some({csuper = Some{snorm = LClass( (["System"],[],("Delegate"|"MulticastDelegate")),_)}} as cls)
 				when List.mem SSealed cls.cflags.tdf_semantics ->
 				let ctx = self#get_ctx in
-				let hxcls = convert_ilclass ctx p cls in
-				cp := (hxcls,p) :: !cp;
+				let hxcls = convert_ilclass ctx p ~delegate:true cls in
+				let delegate = convert_delegate ctx p cls in
+				cp := (hxcls,p) :: (delegate,p) :: !cp;
 				List.iter (fun ilpath ->
 					let path = self#ilpath_to_hx ilpath in
 					build path

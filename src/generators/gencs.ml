@@ -1212,6 +1212,98 @@ let rec cs_expr_of_texpr ectx e =
 			let value_index = List.length cs_args in
 			CsInlineCode (Printf.sprintf "({0}[%s] = {%d})" (placeholders indices) value_index, cs_obj :: cs_args)
 		end
+	| TCall ({ eexpr = TIdent "__delegate__" }, [fn; tref]) ->
+		(* Haxe function to .NET delegate (see convert_delegate in csLib). The delegate
+		   calls the function without boxing its arguments:
+		   - a method: the delegate points to the C# method itself
+		   - a local function: it points to the typed invoke method of its closure class
+		   - anything else: a lambda that calls the function through haxe.lang.Value *)
+		let gctx = ectx.gctx in
+		let dc, dtl = match Abstract.follow_with_abstracts tref.etype with
+			| TInst (c, tl) -> c, tl
+			| _ -> die "" __LOC__
+		in
+		let dargs, dret = match (try follow (apply_params dc.cl_params dtl (PMap.find "Invoke" dc.cl_fields).cf_type) with Not_found -> t_dynamic) with
+			| TFun (args, ret) -> args, ret
+			| _ -> die "" __LOC__
+		in
+		let dtype = cs_type_of_type gctx (TInst (dc, dtl)) in
+		let darg_types = List.map (fun (_, _, t) -> cs_type_of_type gctx t) dargs in
+		let dret_type = cs_type_of_type gctx dret in
+		let arity = List.length dargs in
+		let rec skip e = match e.eexpr with
+			| TParenthesis e | TMeta (_, e) | TCast (e, None) -> skip e
+			| _ -> e
+		in
+		let fn = skip fn in
+		(* same C# signature as the delegate: required arguments only, same types *)
+		let same_signature args ret =
+			List.length args = arity
+			&& List.for_all2 (fun (opt, t) dt -> not opt && cs_type_of_type gctx t = dt) args darg_types
+			&& cs_type_of_type gctx ret = dret_type
+		in
+		let method_signature cf map = match cf.cf_kind, follow (map cf.cf_type) with
+			| Method MethNormal, TFun (args, ret) when cf.cf_params = [] && cf.cf_overloads = [] ->
+				same_signature (List.map (fun (_, o, t) -> o, t) args) ret
+			| _ -> false
+		in
+		begin match fn.eexpr with
+		| TField (obj, (FInstance (c, tl, cf) | FClosure (Some (c, tl), cf))) when method_signature cf (apply_params c.cl_params tl) && not (find_null_in_expr obj) ->
+			CsNew (dtype, [CsField (cs_expr_of_texpr ectx obj, get_native_field_name cf)])
+		| TField (_, FStatic (c, cf)) when method_signature cf (fun t -> t) ->
+			CsNew (dtype, [CsStaticField (cs_type_of_type gctx (TInst (c, List.map (fun _ -> t_dynamic) c.cl_params)), get_cs_field_name c cf)])
+		| TFunction tf when same_signature (List.map (fun (v, def) -> def <> None, v.v_type) tf.tf_args) tf.tf_type
+			(* the typed invoke method of a closure whose arguments are all objects has another return type *)
+			&& List.exists (fun t -> t <> CsTypeObject) darg_types ->
+			CsNew (dtype, [CsField (!generate_closure_class_ref ectx tf fn.etype, invoke_method_name arity)])
+		| _ ->
+			let params = List.mapi (fun i _ -> { p_name = Printf.sprintf "_hx_a%d" (i + 1); p_type = None; p_default = None; p_modifier = None }) dargs in
+			let lambda f =
+				let values = List.mapi (fun i t -> cast_type_to_value t (CsLocal (Printf.sprintf "_hx_a%d" (i + 1)))) darg_types in
+				let call = CsCall (CsField (f, hxvalue_invoke_method_name arity), values) in
+				let body = if dret_type = CsTypeVoid then call else cast_value_to_type dret_type call in
+				CsNew (dtype, [CsLambda (params, CsLambdaExpr body)])
+			in
+			begin match fn.eexpr with
+			| TLocal _ ->
+				lambda (cs_expr_of_texpr ectx fn)
+			| _ ->
+				(* evaluate the function once, when the delegate is created *)
+				let f_param = { p_name = "_hx_f"; p_type = None; p_default = None; p_modifier = None } in
+				let factory_type = CsTypeClass ((["System"], "Func"), [function_type; dtype]) in
+				let factory = CsCast (factory_type, CsParens (CsLambda ([f_param], CsLambdaExpr (lambda (CsLocal "_hx_f"))))) in
+				CsCall (CsParens factory, [CsCast (function_type, cs_expr_of_texpr ectx fn)])
+			end
+		end
+	| TCall ({ eexpr = TIdent ("__delegate_combine__" | "__delegate_remove__" as builtin) }, [d1; d2; tref]) ->
+		(* d1 + d2 and d1 - d2 on .NET delegates *)
+		let dtype = cs_type_of_type ectx.gctx (Abstract.follow_with_abstracts tref.etype) in
+		let name = if builtin = "__delegate_combine__" then "Combine" else "Remove" in
+		CsCast (dtype, CsStaticCall (CsTypeClass ((["System"], "Delegate"), []), name, [cs_expr_of_texpr ectx d1; cs_expr_of_texpr ectx d2]))
+	| TCall ({ eexpr = TField (target, (FInstance (c, _, cf) | FStatic (c, cf) as fa)) }, [handler])
+		when Hashtbl.mem CsTypeMapping.net_lib_types c.cl_path
+		&& (let n = cf.cf_name in
+			let event_name prefix =
+				let l = String.length prefix in
+				if String.length n > l && String.sub n 0 l = prefix then Some (String.sub n l (String.length n - l)) else None
+			in
+			match (match event_name "add_" with Some e -> Some e | None -> event_name "remove_") with
+			| Some e ->
+				(try Meta.has (Meta.Custom ":event") (PMap.find e (match fa with FStatic _ -> c.cl_statics | _ -> c.cl_fields)).cf_meta with Not_found -> false)
+			| None -> false) ->
+		(* .NET event: C# does not allow calling its accessors, use obj.Event += handler *)
+		let is_add = String.length cf.cf_name > 4 && String.sub cf.cf_name 0 4 = "add_" in
+		let prefix_len = if is_add then 4 else 7 in
+		let event = String.sub cf.cf_name prefix_len (String.length cf.cf_name - prefix_len) in
+		let op = if is_add then "+=" else "-=" in
+		let cs_handler = cs_expr_of_texpr ectx handler in
+		begin match fa with
+		| FStatic _ ->
+			let owner = s_cs_type (cs_type_of_type ectx.gctx (TInst (c, List.map (fun _ -> t_dynamic) c.cl_params))) in
+			CsInlineCode (Printf.sprintf "%s.%s %s {0}" owner (escape_identifier event) op, [cs_handler])
+		| _ ->
+			CsInlineCode (Printf.sprintf "{0}.%s %s {1}" (escape_identifier event) op, [cs_expr_of_texpr ectx target; cs_handler])
+		end
 	| TCall ({ eexpr = TIdent ("__cs_ref__" | "__cs_out__" as marker) }, [arg]) ->
 		let rec skip e = match e.eexpr with
 			| TParenthesis e | TMeta (_, e) | TCast (e, None) -> skip e

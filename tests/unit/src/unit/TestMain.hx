@@ -100,7 +100,9 @@ function main() {
 		#if php
 		new TestPhp(),
 		#end
-		#if (java || (cs && TODO_TestOverloads))
+		// Not on cs: the C# target does not support @:overload in Haxe classes, nor
+		// overriding a .NET property from a Haxe class (use cs.Syntax.code if needed)
+		#if java
 		new TestOverloads(),
 		#end
 		new TestOverloadsForEveryone(),

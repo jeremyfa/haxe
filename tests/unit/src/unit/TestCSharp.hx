@@ -129,51 +129,44 @@ class TestCSharp extends Test
 		t(true);
 	}
 
-	#if TODO_TestOverloads // overloads of methods in Haxe classes are not supported by the C# target yet
-	function testOverloadOverride()
+	function testDelegates()
 	{
-		var c = new haxe.test.MyClass();
-		eq(42,c.SomeProp);
-		eq(42,c.SomeProp2);
+		var run = false;
+		var v:haxe.test.VoidVoid = function () run = true;
+		f(run);
+		v.Invoke();
+		t(run);
+		f(didRun);
+		v = doRun;
+		v.Invoke();
+		t(didRun);
 
-		var c = new TestMyClass();
-		c.normalOverload(true);
-		t(c.boolCalled);
-		c.normalOverload(10);
-		t(c.intCalled);
-		c.normalOverload(haxe.Int64.ofInt(0));
-		t(c.int64Called);
-		c.normalOverload("");
-		t(c.stringCalled);
-		c.normalOverload({});
-		t(c.dynamicCalled);
-		// TODO: overriding a .NET property with get_X is not supported by the C# target yet
-		// eq(21,c.SomeProp);
-		// t(c.getCalled);
-		// eq(21,c.SomeProp2);
+		run = false;
+		var someFunc = function() run = true;
+		f(run);
+		v = someFunc;
+		f(run);
+		v.Invoke();
+		t(run);
 
-		// TODO: overloaded constructors of Haxe classes (@:overload new) are not supported
-		// by the C# target yet, use the constructor without argument
-		// var c = new TestMyClass("");
-		// t(c.alternativeCtorCalled);
-		var c = new TestMyClass();
-		var b:haxe.test.MyClass = c;
-		b.normalOverload(true);
-		t(c.boolCalled);
-		b.normalOverload(10);
-		t(c.intCalled);
-		b.normalOverload(haxe.Int64.ofInt(0));
-		t(c.int64Called);
-		b.normalOverload("");
-		t(c.stringCalled);
-		b.normalOverload({});
-		t(c.dynamicCalled);
-		// TODO: overriding a .NET property with get_X is not supported by the C# target yet
-		// eq(21,c.SomeProp);
-		// t(c.getCalled);
-		// eq(21,c.SomeProp2);
+		var someFunc2 = someFunc;
+		var getFun = function() return someFunc2;
+		run = false;
+		f(run);
+		v = { var x = "complex body"; getFun(); };
+		f(run);
+		v.Invoke();
+		t(run);
+
+		//var dyn:Dynamic = v;
+		//t((dyn is haxe.test.VoidVoid));
 	}
-	#end
+
+	var didRun = false;
+	function doRun()
+	{
+		didRun = true;
+	}
 
 	function testEnum()
 	{
@@ -336,65 +329,3 @@ class TestCSharp extends Test
 
 #end
 }
-
-#if TODO_TestOverloads
-private class TestMyClass extends haxe.test.MyClass
-{
-	public function new()
-	{
-		super();
-	}
-
-	// TODO: see testOverloadOverride
-	// @:overload public function new(str:String)
-	// {
-	// 	super();
-	// 	alternativeCtorCalled = true;
-	// }
-
-	public var alternativeCtorCalled:Bool;
-	public var boolCalled:Bool;
-	public var intCalled:Bool;
-	public var int64Called:Bool;
-	public var stringCalled:Bool;
-	public var dynamicCalled:Bool;
-	public var getCalled:Bool;
-
-	@:overload override public function normalOverload(b:Bool):Void
-	{
-		this.boolCalled = true;
-	}
-
-	@:overload override public function normalOverload(i:Int):Void
-	{
-		this.intCalled = true;
-	}
-
-	@:overload override public function normalOverload(i64:haxe.Int64):Void
-	{
-		this.int64Called = true;
-	}
-
-	@:overload override public function normalOverload(str:String):Void
-	{
-		this.stringCalled = true;
-	}
-
-	@:overload override public function normalOverload(dyn:Dynamic):Void
-	{
-		this.dynamicCalled = true;
-	}
-
-	// TODO: overriding a .NET property with get_X is not supported by the C# target yet
-	// @:overload override public function get_SomeProp():Int
-	// {
-	// 	getCalled = true;
-	// 	return 21;
-	// }
-
-	// @:overload override public function get_SomeProp2():Int
-	// {
-	// 	return Std.int(super.get_SomeProp2() / 2);
-	// }
-}
-#end
