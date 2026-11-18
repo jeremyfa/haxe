@@ -97,6 +97,7 @@ tests/misc/projects/Issue4070/cpp/
 
 /*.manifest
 /tests/misc/eventLoop/cpp
+/tests/misc/eventLoop/cs
 /tests/misc/eventLoop/eventLoop.js
 /tests/misc/eventLoop/eventLoop.n
 /tests/misc/eventLoop/eventLoop.swf

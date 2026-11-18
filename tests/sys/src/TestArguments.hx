@@ -79,20 +79,8 @@ class TestArguments extends utest.Test {
 		#else
 			"bin/cpp/TestArguments";
 		#end
-	#elseif cs
-		#if debug
-			"bin/cs/bin/TestArguments-Debug.exe";
-		#else
-			"bin/cs/bin/TestArguments.exe";
-		#end
 	#elseif jvm
 		"bin/jvm/TestArguments.jar";
-	#elseif java
-		#if debug
-			"bin/java/TestArguments-Debug.jar";
-		#else
-			"bin/java/TestArguments.jar";
-		#end
 	#elseif python
 		"bin/python/TestArguments.py";
 	#elseif php
@@ -101,6 +89,8 @@ class TestArguments extends utest.Test {
 		"bin/lua/TestArguments.lua";
 	#elseif js
 		"bin/js/TestArguments.js";
+	#elseif cs
+		"bin/cs-args/bin/aot/Project";
 	#else
 		null;
 	#end

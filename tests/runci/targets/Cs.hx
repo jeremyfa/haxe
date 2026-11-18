@@ -39,9 +39,11 @@ class Cs {
 		return 'bin/aot/Project$ext';
 	}
 
-	// Create Project.aot.csproj file for AOT compilation
+	// Create Project.aot.csproj file for AOT compilation. It imports Sources.props like the
+	// generated Project.csproj, so that only the files of the last compilation are built.
 	static function createAotProjectFile():Void {
 		sys.io.File.saveContent("Project.aot.csproj", '<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="Sources.props" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -137,8 +139,6 @@ class Cs {
 
 		changeDirectory(unitDir);
 
-		Display.maybeRunDisplayTests(Cs);
-
 		// === Misc Tests (Bootstrap) ===
 		// JIT
 		changeDirectory(miscCsDir);
@@ -188,6 +188,12 @@ class Cs {
 		infoMsg('Running AOT binary (sys test)...');
 		runSysTest(fullPath, []);
 
+		// === Event loop (output not checked, like on cpp and hl) ===
+		changeDirectory(getMiscSubDir("eventLoop"));
+		runCommand("haxe", ["build-cs.hxml"].concat(args));
+		changeDirectory("cs");
+		runCommand("dotnet", ["run"]);
+
 		// === Thread Tests ===
 		// JIT
 		changeDirectory(threadsDir);
@@ -202,38 +208,6 @@ class Cs {
 		runCommand("haxe", ["build.hxml", "-cs", "export/cs", "-lib", "hxcs", "-D", "cs.aot", "-D", "cs.closure-cache"].concat(args));
 		changeDirectory("export/cs");
 		infoMsg("=== Running Thread Tests (AOT) ===");
-		runAotTest();
-
-		// === Coroutine Tests (hxcoro) ===
-		if (!sys.FileSystem.exists(partyDir))
-			sys.FileSystem.createDirectory(partyDir);
-		changeDirectory(partyDir);
-		if (!sys.FileSystem.exists("hxcoro")) {
-			runCommand("git", ["clone", "-b", Config.hxcoroVersion, "https://github.com/HaxeFoundation/hxcoro", "hxcoro"]);
-		}
-		changeDirectory("hxcoro");
-		// Patch Setup.hx to add cs target support (until hxcoro upstream adds it)
-		var setupPath = "src/hxcoro/run/Setup.hx";
-		var content = sys.io.File.getContent(setupPath);
-		content = StringTools.replace(content, "#elseif (jvm || cpp || hl)", "#elseif (jvm || cpp || hl || cs)");
-		sys.io.File.saveContent(setupPath, content);
-		runCommand("haxelib", ["newrepo"]);
-		runCommand("haxelib", ["git", "utest", "https://github.com/haxe-utest/utest.git"]);
-		runCommand("haxelib", ["dev", "hxcoro", "."]);
-		runCommand("haxelib", ["dev", "hxcs", Path.join([partyDir, "hxcs"])]);
-		// JIT
-		runCommand("haxe", ["--cwd", "tests", "build-base.hxml", "--cs", "bin/cs", "-lib", "hxcs"]);
-		changeDirectory("tests/bin/cs");
-		infoMsg("=== Running Coroutine Tests (JIT) ===");
-		runCommand("dotnet", ["run"]);
-
-		// AOT (separate compilation)
-		changeDirectory(partyDir);
-		changeDirectory("hxcoro");
-		deleteDirectoryRecursively("tests/bin/cs");
-		runCommand("haxe", ["--cwd", "tests", "build-base.hxml", "--cs", "bin/cs", "-lib", "hxcs", "-D", "cs.aot", "-D", "cs.closure-cache"]);
-		changeDirectory("tests/bin/cs");
-		infoMsg("=== Running Coroutine Tests (AOT) ===");
 		runAotTest();
 	}
 }

@@ -21,6 +21,8 @@ class Config {
 	static public final threadsDir = Path.join([cwd, "threads"]);
 	// this stands for third-party, but I've always wanted a party directory
 	static public final partyDir = Path.join([cwd, "party"]);
+	// branch of https://github.com/jeremyfa/hxcs, which provides the .NET Standard 2.1 DLLs
+	static public final hxcsVersion = "master";
 
 	static public function getMiscSubDir(...subDir:String)
 		return Path.join([cwd, "misc"].concat(subDir.toArray()));

@@ -16,7 +16,7 @@ class TestSys extends TestCommandBase {
 		// new copies should not be affected
 		Assert.isNull(Sys.environment()[nonExistent]);
 
-		#if !java
+		#if !jvm
 		// env should not update when environment updates
 		final toUpdate = "TO_UPDATE";
 
@@ -62,7 +62,7 @@ class TestSys extends TestCommandBase {
 		Assert.isNull(Sys.getEnv("doesn't exist"));
 	}
 
-	#if !java
+	#if !jvm
 	function testPutEnv() {
 		Sys.putEnv("FOO", "value");
 		Assert.equals("value", Sys.getEnv("FOO"));
@@ -116,18 +116,16 @@ class TestSys extends TestCommandBase {
 				case _:
 					Assert.isTrue(StringTools.endsWith(p, "Main-debug"));
 			}
-		#elseif cs
-			Assert.isTrue(StringTools.endsWith(p, "Main-Debug.exe"));
 		#elseif jvm
 			Assert.isTrue(StringTools.endsWith(p, "sys.jar"));
-		#elseif java
-			Assert.isTrue(StringTools.endsWith(p, "Main-Debug.jar"));
 		#elseif python
 			Assert.isTrue(StringTools.endsWith(p, "sys.py"));
 		#elseif php
 			Assert.isTrue(StringTools.endsWith(p, "index.php"));
 		#elseif lua
 			Assert.isTrue(StringTools.endsWith(p, "sys.lua"));
+		#elseif cs
+			Assert.isTrue(StringTools.endsWith(p, "Project" + (Sys.systemName() == "Windows" ? ".exe" : "")));
 		#end
 	}
 
@@ -137,7 +135,7 @@ class TestSys extends TestCommandBase {
 		Assert.notEquals(current, haxe.io.Path.removeTrailingSlashes(current));
 	}
 
-	#if !java
+	#if !jvm
 	function testSetCwd() {
 		var cur = Sys.getCwd();
 		Sys.setCwd("../");

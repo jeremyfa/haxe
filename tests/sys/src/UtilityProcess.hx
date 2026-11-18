@@ -10,16 +10,12 @@ class UtilityProcess {
 	public static var BIN_PATH =
 #if cpp
 		Path.join(["bin", "cpp"]);
-#elseif cs
-		Path.join(["bin", "cs", "bin"]);
 #elseif hl
 		Path.join(["bin", "hl"]);
 #elseif lua
 		Path.join(["bin", "lua"]);
 #elseif jvm
 		Path.join(["bin", "jvm"]);
-#elseif java
-		Path.join(["bin", "java"]);
 #elseif neko
 		Path.join(["bin", "neko"]);
 #elseif php
@@ -30,6 +26,8 @@ class UtilityProcess {
 		Path.join(["src"]);
 #elseif js
 		Path.join(["bin", "js"]);
+#elseif cs
+		Path.join(["bin", "cs-utility", "bin", "aot"]);
 #else
 		null;
 #end
@@ -40,24 +38,12 @@ class UtilityProcess {
 		#else
 			"UtilityProcess";
 		#end
-#elseif cs
-		#if debug
-			"UtilityProcess-Debug.exe";
-		#else
-			"UtilityProcess.exe";
-		#end
 #elseif hl
 		"UtilityProcess.hl";
 #elseif lua
 		"UtilityProcess.lua";
 #elseif jvm
 		"UtilityProcess.jar";
-#elseif java
-		#if debug
-			"UtilityProcess-Debug.jar";
-		#else
-			"UtilityProcess.jar";
-		#end
 #elseif neko
 		"UtilityProcess.n";
 #elseif php
@@ -68,6 +54,8 @@ class UtilityProcess {
 		"UtilityProcess.hx";
 #elseif js
 		"UtilityProcess.js";
+#elseif cs
+		"Project";
 #else
 		null;
 #end
@@ -86,13 +74,6 @@ class UtilityProcess {
 		new Process("haxe", ["compile-each.hxml", "-p", options.execPath, "--run", options.execName].concat(args));
 		#elseif cpp
 		new Process(execFull, args);
-		#elseif cs
-		(switch (Sys.systemName()) {
-			case "Windows":
-				new Process(execFull, args);
-			case _:
-				new Process("mono", [execFull].concat(args));
-		});
 		#elseif java
 		new Process(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", execFull].concat(args));
 		#elseif python
@@ -105,6 +86,8 @@ class UtilityProcess {
 		new Process(php.Global.defined('PHP_BINARY') ? php.Const.PHP_BINARY : 'php', [execFull].concat(args));
 		#elseif lua
 		new Process("lua", [execFull].concat(args));
+		#elseif cs
+		new Process(Sys.systemName() == "Windows" ? execFull + ".exe" : execFull, args);
 		#else
 		null;
 		#end
@@ -138,13 +121,6 @@ class UtilityProcess {
 		Sys.command("haxe", ["compile-each.hxml", "-p", options.execPath, "--run", options.execName].concat(args));
 		#elseif cpp
 		Sys.command(execFull, args);
-		#elseif cs
-		(switch (Sys.systemName()) {
-			case "Windows":
-				Sys.command(execFull, args);
-			case _:
-				Sys.command("mono", [execFull].concat(args));
-		});
 		#elseif java
 		Sys.command(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", execFull].concat(args));
 		#elseif python
@@ -159,6 +135,8 @@ class UtilityProcess {
 		Sys.command("lua", [execFull].concat(args));
 		#elseif js
 		Sys.command("node", [execFull].concat(args));
+		#elseif cs
+		Sys.command(Sys.systemName() == "Windows" ? execFull + ".exe" : execFull, args);
 		#else
 		1;
 		#end

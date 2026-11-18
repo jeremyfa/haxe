@@ -15,5 +15,6 @@
 --jvm java.jar
 --next
 -cs cs
+-lib hxcs
 --next
 -cpp cpp

@@ -13,23 +13,14 @@ class TestCommandBase extends utest.Test {
 		var bin = FileSystem.absolutePath(TestArguments.bin);
 		var args = TestArguments.expectedArgs;
 
-		#if !cs
 		var exitCode = run("haxe", ["compile-each.hxml", "--run", "TestArguments"].concat(args));
 		Assert.equals(0, exitCode);
-		#end
 
 		var exitCode =
 			#if (macro || interp)
 				run("haxe", ["compile-each.hxml", "--run", "TestArguments"].concat(args));
 			#elseif cpp
 				run(bin, args);
-			#elseif cs
-				switch (Sys.systemName()) {
-					case "Windows":
-						run(bin, args);
-					case _:
-						run("mono", [bin].concat(args));
-				}
 			#elseif java
 				run(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", bin].concat(args));
 			#elseif python
@@ -44,6 +35,8 @@ class TestCommandBase extends utest.Test {
 				run("lua", [bin].concat(args));
 			#elseif js
 				run("node", [bin].concat(args));
+			#elseif cs
+				run(Sys.systemName() == "Windows" ? bin + ".exe" : bin, args);
 			#else
 				-1;
 			#end
@@ -116,13 +109,6 @@ class TestCommandBase extends utest.Test {
 					run("haxe", ["compile-each.hxml", "--run", "ExitCode"].concat(args));
 				#elseif cpp
 					run(bin, args);
-				#elseif cs
-					switch (Sys.systemName()) {
-						case "Windows":
-							run(bin, args);
-						case _:
-							run("mono", [bin].concat(args));
-					}
 				#elseif java
 					run(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", bin].concat(args));
 				#elseif python
@@ -137,6 +123,8 @@ class TestCommandBase extends utest.Test {
 					run("lua", [bin].concat(args));
 				#elseif js
 					run("node", [bin].concat(args));
+				#elseif cs
+					run(Sys.systemName() == "Windows" ? bin + ".exe" : bin, args);
 				#else
 					-1;
 				#end
