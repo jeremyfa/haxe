@@ -124,12 +124,7 @@ module Setup = struct
 					actx.classes <- (Path.parse_path "cpp.cppia.HostClasses" ) :: actx.classes;
 				"cpp"
 			| Cs ->
-				add_std "cs";
-				(* The exception filter refers to cs.Exception: type it with the other
-				   modules, otherwise it is loaded after com.types is built and its
-				   @:native path is never applied *)
-				actx.classes <- (["cs"],"Exception") :: actx.classes;
-				"cs"
+				add_std "cs"; "cs"
 			| Java ->
 				(* java_ver and java0..N: still read by std/java/_std/Sys.hx *)
 				let java_ver = try
@@ -348,6 +343,10 @@ let compile ctx actx =
 		if actx.cmds = [] && not actx.did_something then actx.raise_usage();
 	end else begin
 		(* Actual compilation starts here *)
+		(* C#: the exception filter refers to cs.Exception, type it with the other modules.
+		   Otherwise it is loaded after com.types is built and its @:native path is never
+		   applied. *)
+		if com.platform = Cs then actx.classes <- (["cs"],"Exception") :: actx.classes;
 		let tctx = Setup.create_typer_context ctx actx in
 		com.stage <- CTyperCreated;
 		let display_file_dot_path = DisplayProcessing.maybe_load_display_file_before_typing tctx display_file_dot_path in

@@ -1606,7 +1606,14 @@ let maybe_load_net_std com net_std_base =
 			end
 		) com.class_path;
 		match !found_dir with
-		| None -> []
+		| None ->
+			(* The C# std uses the .NET API (the cs.system package): without it, typing fails on
+			   missing types, so say where it is expected *)
+			if com.Common.native_libs.net_libs = [] then
+				com.Common.warning WInfo com.Common.warning_options
+					(Printf.sprintf "No .NET standard library found (%s in the class paths): add -lib hxcs, or provide the .NET API with --net-lib" dir_rel)
+					Globals.null_pos;
+			[]
 		| Some dir ->
 			if Common.raw_defined com "net_loader_debug" then
 				Printf.printf "(net-lib) Auto-loading .NET libs from %s\n" dir;

@@ -16,5 +16,4 @@ compile-exe-runner.hxml
 --next compile-cpp.hxml
 --next compile-cs.hxml
 --next compile-python.hxml
---next compile-cs-unsafe.hxml
 --next compile-macro.hxml

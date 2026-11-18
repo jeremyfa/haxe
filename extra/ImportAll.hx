@@ -60,6 +60,8 @@ class ImportAll {
 			if( !Context.defined("jvm") ) return;
 		case "cs":
 			if( !Context.defined("cs") ) return;
+		case "cs.haxe":
+			return; // externs of the C# runtime, declared in the haxe.lang package
 		case "python":
 			if ( !Context.defined("python") ) return;
 		case "hl":
