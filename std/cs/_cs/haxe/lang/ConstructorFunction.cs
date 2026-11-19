@@ -12,9 +12,32 @@ namespace haxe.lang
     {
         private readonly Func<object[], object> _ctor;
 
+        // Number of arguments that the constructor reads. Fewer can be given
+        // (Type.createInstance without the optional arguments at the end): the
+        // missing ones are null, which makes them take their default values.
+        private readonly int _arity;
+
         public ConstructorFunction(Func<object[], object> ctor)
         {
             _ctor = ctor;
+            _arity = 0;
+        }
+
+        public ConstructorFunction(Func<object[], object> ctor, int arity)
+        {
+            _ctor = ctor;
+            _arity = arity;
+        }
+
+        private object[] completed(object[] args)
+        {
+            int len = (args != null) ? args.Length : 0;
+            if (len >= _arity)
+                return args;
+            var all = new object[_arity];
+            if (len > 0)
+                global::System.Array.Copy(args, all, len);
+            return all;
         }
 
         /// <summary>
@@ -24,7 +47,7 @@ namespace haxe.lang
         /// </summary>
         public object create(object[] args)
         {
-            return _ctor(args);
+            return _ctor(completed(args));
         }
 
         /// <summary>
@@ -37,7 +60,7 @@ namespace haxe.lang
             var nativeArgs = new object[len];
             for (int i = 0; i < len; i++)
                 nativeArgs[i] = args.__get(i);
-            return _ctor(nativeArgs);
+            return _ctor(completed(nativeArgs));
         }
     }
 }

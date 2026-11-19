@@ -9277,9 +9277,11 @@ let generate_static_field_accessors gctx c =
 				CsField (CsLocal "acc", "emptyFactory"),
 				CsNew (constructor_function_type, [empty_factory_lambda])
 			)) in
+			(* The number of constructor arguments goes with the lambda: Type.createInstance can
+			   give fewer (the optional ones at the end), and the lambda reads them all. *)
 			let set_factory = CsExprStmt (CsBinop (CsOpAssign,
 				CsField (CsLocal "acc", "factory"),
-				CsNew (constructor_function_type, [factory_lambda])
+				CsNew (constructor_function_type, [factory_lambda; CsConst (CsConstInt (Int32.of_int (List.length ctor_args)))])
 			)) in
 			([], [set_empty_factory; set_factory])
 	in
