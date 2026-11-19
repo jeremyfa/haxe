@@ -74,6 +74,7 @@ class Main {
 		test("Dynamic index of an array", testDynamicArrayIndex);
 		test("element changed in place in an array stored another way", testInPlaceOnOtherStorage);
 		test("Null value written to a field of a Dynamic object", testNullValueToDynamicField);
+		test("conditional between a value and a Bool, as a Dynamic", testConditionalWithBool);
 		test("object literals given to structures", testObjectLiteralsForStructures);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
@@ -732,6 +733,10 @@ class Main {
 		var base:ValueOption<String> = text;
 		t(textLength(text.validate(true)) == 2 && textLength(text.validate("abc")) == 3 && text.validate(1).length == 1);
 		t(number.validate(true) + 1 == 6 && number.pick(3) * 2 == 8 && textLength(base.validate(false)) == 5);
+		// through the parent type, with a number of another kind than the override takes
+		var ratio:ValueOption<Float> = new RatioOption();
+		var anyOption:ValueOption<Any> = cast ratio;
+		t(anyOption.pick(3) == 6.0 && anyOption.pick(1.5) == 3.0);
 	}
 
 	static function textLength(s:String):Int
@@ -801,6 +806,18 @@ class Main {
 		t(isInt(result.tabSize) && result.tabSize == 2 && Std.isOfType(result.readOnly, Bool) && result.readOnly == true);
 		t(isInt(result.plain) && result.plain == 7 && isInt(result.made) && result.made == 2);
 		t(haxe.Json.stringify(result).indexOf('"tabSize":2') != -1);
+	}
+
+	static function testConditionalWithBool() {
+		// Haxe writes `c ? value : false` as `c && value` when the result is Dynamic
+		var seen = [];
+		for (list in [false, true]) {
+			final option:Any = list ? ["a", "b"] : false;
+			final other:Any = list ? true : ["c"];
+			final number:Dynamic = list ? 5 : false;
+			seen.push(Std.string(option) + "/" + Std.string(other) + "/" + Std.string(number));
+		}
+		t(seen.join(" ") == "false/[c]/false [a,b]/true/5");
 	}
 
 	static function testObjectLiteralsForStructures() {
@@ -2323,4 +2340,12 @@ class NullableProps {
 
 	public function make():Null<Int>
 		return stored;
+}
+
+class RatioOption extends ValueOption<Float> {
+	public function new()
+		super(0.5);
+
+	override public function pick(value:Float):Float
+		return value * 2;
 }

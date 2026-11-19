@@ -1643,6 +1643,17 @@ let rec cs_expr_of_texpr ectx e =
 				| None ->
 					CsArrayAccess (cs_expr_of_texpr ectx e1, cs_expr_of_texpr ectx e2)
 			end
+	| TBinop ((OpBoolAnd | OpBoolOr) as op, e1, e2)
+		when (match cs_type_of_type ectx.gctx e.etype, cs_type_of_type ectx.gctx e2.etype with
+			| (CsTypeObject | CsTypeDynamic), t2 -> t2 <> CsTypeBool
+			| _ -> false) ->
+		(* Haxe turns `c ? value : false` into `c && value` (and `c ? true : value` into
+		   `c || value`) when the result is Dynamic. C# only has these operators on
+		   bool: it is the conditional again, with its two values as objects. *)
+		let cond = bool_condition ectx e1 (cs_expr_of_texpr ectx e1) in
+		let value = CsCast (CsTypeObject, dynamic_field_value ectx e2 (cs_expr_of_texpr ectx e2)) in
+		if op = OpBoolAnd then CsParens (CsTernary (cond, value, CsCast (CsTypeObject, CsConst (CsConstBool false))))
+		else CsParens (CsTernary (cond, CsCast (CsTypeObject, CsConst (CsConstBool true)), value))
 	| TBinop (op, e1, e2) ->
 		(* Special handling for Null<T> comparisons with null and generic type param equality.
 		   Uses expr_produces_csharp_null_type (the SINGLE SOURCE OF TRUTH) to determine
@@ -8348,7 +8359,9 @@ let generate_field gctx c cf is_static =
 						| None -> name
 					) param_cs_names in
 					let cast_stmts = List.map (fun (shadow_name, param_name, haxe_cs) ->
-						CsVarDecl (shadow_name, Some haxe_cs, Some (CsCast (haxe_cs, CsLocal param_name)))
+						(* The value comes as an object: a number is unboxed whatever number it
+						   is (an Int given where the override takes a Float) *)
+						CsVarDecl (shadow_name, Some haxe_cs, Some (cast_object_to_type haxe_cs (CsLocal param_name)))
 					) override_param_casts in
 					let body_stmts = generate_method_body gctx ~param_cs_names:param_cs_names_with_shadows ~type_params_in_scope:all_type_params_in_scope ~type_param_constraints:all_type_param_constraints ~return_type:ret ~class_path:c.cl_path ~method_name:cf.cf_name e in
 					let all_stmts = cast_stmts @ body_stmts in
