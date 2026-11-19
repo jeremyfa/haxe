@@ -607,7 +607,9 @@ let rec convert_signature ctx p = function
 	| LInt32 ->
 		mk_type_path ctx ([],[],"Int") []
 	| LUInt32 ->
-		mk_type_path ctx ([],[],"UInt") []
+		(* cs.UInt is the C# uint. The UInt of Haxe is not: on this target it is an
+		   abstract over Int, a C# int. *)
+		mk_type_path ctx (["cs"],[],"UInt") []
 	| LInt64 ->
 		mk_type_path ctx (["haxe"],[],"Int64") []
 	| LUInt64 ->

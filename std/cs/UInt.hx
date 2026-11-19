@@ -23,6 +23,9 @@
 package cs;
 
 /**
- * Represents C#'s `uint` type (unsigned 32-bit integer).
- */
-@:notNull @:runtimeValue @:coreType extern abstract UInt from Int to Int {}
+	The C# `uint` (unsigned 32-bit integer).
+
+	The `UInt` of Haxe is not a `uint` on this target: it is an abstract over `Int`,
+	stored as an `int`. Both convert to and from this type.
+**/
+@:notNull @:runtimeValue @:coreType extern abstract UInt from Int to Int from std.UInt to std.UInt {}

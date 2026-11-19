@@ -456,7 +456,7 @@ let rec cs_type_of_type_inner gctx stack t =
 		(* Core type abstract - handle specially *)
 		begin match a.a_path with
 		| ([], "Int64") | (["cs"], "Int64") -> CsTypeLong
-		| ([], "UInt") -> CsTypeUInt
+		| ([], "UInt") | (["cs"], "UInt") -> CsTypeUInt
 		| ([], "UInt64") | (["cs"], "UInt64") -> CsTypeULong
 		| ([], "Int8") | (["cs"], "Int8") -> CsTypeSByte
 		| ([], "UInt8") | (["cs"], "UInt8") -> CsTypeByte
