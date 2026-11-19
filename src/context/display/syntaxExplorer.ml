@@ -180,6 +180,16 @@ let explore_uncached_modules tctx cs symbols =
 				Typecore.flush_pass tctx Typecore.PFinal "final";
 				m :: acc
 			with _ ->
+				(* The module that failed leaves delayed tasks behind. Run them here as well, or
+				   they run later in the request, outside of this handler, and their errors
+				   become errors of the request: which module leaves tasks depends on the order
+				   of the files, so on their paths. *)
+				let rec drain attempts =
+					if attempts > 0 then
+						try Typecore.flush_pass tctx Typecore.PFinal "final"
+						with _ -> drain (attempts - 1)
+				in
+				drain 1000;
 				acc
 			end
 	) files [] in
