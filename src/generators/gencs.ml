@@ -10837,6 +10837,75 @@ let generate com =
 		| _ -> ()
 	) com.types;
 
+	(* A constructor whose super(...) arguments use locals of the statements before it
+	   cannot be a plain C# constructor: `: base(...)` is evaluated before any statement.
+	   It is generated like the constructors that use `this` before super(): a _hx_new
+	   method with the body in the order of the source. Its Haxe ancestors need _hx_new
+	   too, to be called from it. (With a native parent, the arguments have to be computed
+	   in the `: base(...)` call itself: nothing is changed.) *)
+	let rec mark_two_phase c =
+		let mark_parent () = match c.cl_super with
+			| Some (sc, _) when not (has_class_flag sc CExtern) -> mark_two_phase sc
+			| _ -> ()
+		in
+		match c.cl_constructor with
+		| Some cf when not (Meta.has Meta.HxGen cf.cf_meta) ->
+			cf.cf_meta <- (Meta.HxGen, [], null_pos) :: cf.cf_meta;
+			mark_parent ()
+		| Some _ -> ()
+		| None -> mark_parent ()
+	in
+	List.iter (fun mt ->
+		match mt with
+		| TClassDecl ({ cl_super = Some (sc, _); cl_constructor = Some cf } as c)
+			when not (has_class_flag c CExtern) && not (has_class_flag sc CExtern) ->
+			begin match cf.cf_expr with
+			| Some e ->
+				begin match extract_super_call e with
+				| (Some args, pre, _) when super_args_reference_body_locals args pre -> mark_two_phase c
+				| _ -> ()
+				end
+			| None -> ()
+			end
+		| _ -> ()
+	) com.types;
+
+	(* Field accesses and calls through a value whose C# type is object while Haxe knows
+	   its class: a value typed by a type parameter with a class or interface constraint
+	   (type parameters of Haxe classes are erased), or a local declared with such a type
+	   parameter and used as its constraint (what inlining `this` of a method produces).
+	   The value is cast to the class that declares the member, so that the access is a
+	   plain member access, and not a lookup by name through reflection. *)
+	let rec cast_erased_receivers e =
+		let e = Type.map_expr cast_erased_receivers e in
+		match e.eexpr with
+		| TField (obj, ((FInstance (c, tl, _) | FClosure (Some (c, tl), _)) as fa)) ->
+			let is_type_param t = match follow t with
+				| TInst ({ cl_kind = KTypeParameter _ }, _) -> true
+				| _ -> false
+			in
+			let declared_by_class = match c.cl_kind with KTypeParameter _ -> false | _ -> true in
+			let erased = is_type_param obj.etype || (match obj.eexpr with
+				| TLocal v -> is_type_param v.v_type
+				| _ -> false)
+			in
+			if erased && declared_by_class then
+				{ e with eexpr = TField ({ obj with eexpr = TCast (obj, None); etype = TInst (c, tl) }, fa) }
+			else
+				e
+		| _ -> e
+	in
+	let cast_field cf = cf.cf_expr <- Option.map cast_erased_receivers cf.cf_expr in
+	List.iter (fun mt ->
+		match mt with
+		| TClassDecl c when not (has_class_flag c CExtern) ->
+			List.iter cast_field c.cl_ordered_statics;
+			List.iter cast_field c.cl_ordered_fields;
+			Option.may cast_field c.cl_constructor;
+			c.cl_init <- Option.map cast_erased_receivers c.cl_init
+		| _ -> ()
+	) com.types;
+
 	(* Generate all types *)
 	let class_defs = ref [] in
 	List.iter (fun mt ->
