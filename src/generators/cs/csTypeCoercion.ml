@@ -337,24 +337,35 @@ let rec cs_expr_is_primitive_const cs_expr =
    Returns Some if it's a simple unwrap case, None for more complex conversions. *)
 let coerce_null_unwrap_exact cs_arg arg_type expected_type =
 	if cs_expr_is_object_cast cs_arg then None  (* Can't unwrap object cast *)
-	else if cs_expr_is_primitive_const cs_arg then
+	else if cs_expr_is_primitive_const cs_arg then begin
 		(* Expression is already a primitive constant (e.g. after Haxe inlining).
 		   The Haxe type says Null<T> but the actual C# expr is just a literal.
-		   No .value needed - return the expression unchanged. *)
-		Some cs_arg
+		   No .value needed. The literal still needs a cast when C# does not convert
+		   its number type to the expected one by itself (a double literal to float). *)
+		match get_cs_null_inner arg_type with
+		| Some inner_type when needs_explicit_numeric_cast inner_type expected_type ->
+			Some (CsCast (expected_type, cs_arg))
+		| _ -> Some cs_arg
+	end
 	else match get_cs_null_inner arg_type with
 	| None -> None  (* arg is not Null<T> *)
 	| Some inner_type ->
+		(* For CsUnop (prefix ops like ++a), wrap in parens to get (++a).value not ++a.value.
+		   For CsBinop, also wrap for proper precedence. *)
+		let wrapped = match cs_arg with
+			| CsUnop _ | CsBinop _ -> CsParens cs_arg
+			| _ -> cs_arg
+		in
 		if inner_type = expected_type then
-			(* Exact match: Null<int> → int, just unwrap.
-			   For CsUnop (prefix ops like ++a), wrap in parens to get (++a).value not ++a.value.
-			   For CsBinop, also wrap for proper precedence. *)
-			let wrapped = match cs_arg with
-				| CsUnop _ | CsBinop _ -> CsParens cs_arg
-				| _ -> cs_arg
-			in
+			(* Exact match: Null<int> → int, just unwrap. *)
 			Some (CsField (wrapped, "value"))
-		else
+		else if is_cs_number_type inner_type && is_cs_number_type expected_type then begin
+			(* Null<double> → float, Null<int> → double...: unwrap, then convert the number
+			   (with a cast when C# does not do it by itself) *)
+			let value = CsField (wrapped, "value") in
+			if needs_explicit_numeric_cast inner_type expected_type then Some (CsCast (expected_type, value))
+			else Some value
+		end else
 			None  (* Not an exact match, need more complex handling *)
 
 (* Handle Null<object> to primitive with Runtime conversion.
