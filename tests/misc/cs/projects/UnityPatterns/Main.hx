@@ -44,6 +44,10 @@ class Main {
 		test("final class with statements before super()", testFinalTwoPhase);
 		test("methods with many arguments", testManyArguments);
 		test("statements before super()", testStatementsBeforeSuper);
+		test("optional Int given to an optional Float", testOptionalNumbers);
+		test("Dynamic values in typed code", testDynamicInTypedCode);
+		test("constructor argument named like a local of an inlined call", testConstructorArgumentNames);
+		test("increment of a Null<Int> in a comparison", testNullIncrementInComparison);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -172,6 +176,68 @@ class Main {
 		t(RenderTex.maker.count == 2);
 		var sub = new SubRenderTex(3);
 		t(sub.item == "6x6 d1" && sub.extra == 3 && sub.flag);
+	}
+
+	static function testOptionalNumbers() {
+		var p = new Packer(3, 4);
+		t(p.inlined.w == 3 && p.inlined.h == 4 && p.plain.w == 3 && p.plain.h == 4);
+		var q = new Packer();
+		t(q.inlined.w == 0 && q.plain.h == 0);
+	}
+
+	static function testDynamicInTypedCode() {
+		// a typed field combined with a Dynamic value
+		var entry = new Entry();
+		entry.alpha *= dynamicMin(1.0, 0.5);
+		var three:Dynamic = 3;
+		entry.alpha += three;
+		t(entry.alpha == 4);
+		// a Dynamic index on a Dynamic array
+		var arr:Dynamic = [1, 2, 3];
+		var index:Dynamic = 1;
+		arr[index] = 5;
+		var got:Int = arr[index];
+		t(got == 5 && arr[2] == 3);
+		arr[index] += 2;
+		t(arr[1] == 7);
+		// a function kept in a Dynamic field
+		var item = new Listener();
+		var log = [];
+		item.willEmit = function() log.push("0");
+		item.willEmit();
+		item.willEmit = function(a:Int) log.push("1:" + a);
+		item.willEmit(7);
+		item.willEmit = function(a:Int, b:String) log.push(a + b);
+		item.willEmit(8, "x");
+		t(log.join(",") == "0,1:7,8x");
+	}
+
+	static function dynamicMin(a:Dynamic, b:Dynamic):Dynamic {
+		return Math.min(a, b);
+	}
+
+	static function testConstructorArgumentNames() {
+		var ph = new Phys(1.5);
+		t(ph.body.rot == 3 && ph.body.seen == "box");
+		var other = new Phys(2, "circle");
+		t(other.body.rot == 4 && other.body.seen == "circle");
+	}
+
+	static function testNullIncrementInComparison() {
+		t(fill([1, 2, 3, 4], 2) == 2);
+		t(fill([1, 2, 3]) == 3);
+	}
+
+	static function fill(items:Array<Int>, ?count:Int):Int {
+		if (count == null)
+			count = items.length;
+		var done = 0;
+		for (j in 0...items.length) {
+			done++;
+			if (--count <= 0)
+				break;
+		}
+		return done;
 	}
 
 	static function testNativeBase() {
@@ -954,6 +1020,74 @@ class SubRenderTex extends RenderTex {
 		var doubled = size * 2;
 		super(size, size, doubled / size);
 		extra = size;
+	}
+}
+
+class PackRect {
+	public var w:Float;
+	public var h:Float;
+	public var flipped:Bool;
+
+	public inline function new(x:Float = 0, y:Float = 0, width:Float = 0, height:Float = 0, flipped:Bool = false) {
+		w = width;
+		h = height;
+		this.flipped = flipped;
+	}
+}
+
+class PlainRect {
+	public var w:Float;
+	public var h:Float;
+
+	public function new(x:Float = 0, y:Float = 0, width:Float = 0, height:Float = 0) {
+		w = width;
+		h = height;
+	}
+}
+
+class Packer {
+	public var inlined:PackRect;
+	public var plain:PlainRect;
+
+	public function new(width:Int = 0, height:Int = 0) {
+		inlined = new PackRect(0, 0, width, height);
+		plain = new PlainRect(0, 0, width, height);
+	}
+}
+
+class Entry {
+	public var alpha:Float = 2;
+
+	public function new() {}
+}
+
+class Listener {
+	public var willEmit:Dynamic = null;
+
+	public function new() {}
+}
+
+class PhysBody {
+	public var rot:Float = 0;
+	public var seen = "";
+
+	public function new() {}
+
+	inline public function setRotation(rotation:Float):Void {
+		var rotation = rotation * 2;
+		rot = rotation;
+	}
+}
+
+class Phys {
+	public var body:PhysBody;
+
+	public function new(rotation:Float, ?shape:String) {
+		if (shape == null)
+			shape = "box";
+		body = new PhysBody();
+		body.seen = shape;
+		body.setRotation(rotation);
 	}
 }
 
