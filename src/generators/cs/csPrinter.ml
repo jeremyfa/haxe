@@ -528,8 +528,11 @@ and print_expr ctx = function
 					end else
 						Buffer.add_string buf ("{" ^ idx_str ^ "}")
 				end else begin
+					(* Not a placeholder ("{0, 0}", "{x"): the brace is plain code, and so is
+					   what follows it. Go back to the brace: the loop moves to the next
+					   character. *)
 					Buffer.add_char buf '{';
-					i := start
+					i := start - 1
 				end
 			end else begin
 				Buffer.add_char buf template.[!i]
