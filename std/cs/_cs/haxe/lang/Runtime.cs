@@ -716,6 +716,41 @@ namespace haxe.lang
         }
 
         /// <summary>
+        /// The file a path leads to: for a symbolic link, the file at the end of the
+        /// links, which is what stat() describes. Before .NET 6 (Unity) the link cannot
+        /// be resolved: the file is returned as it is, see fileLength().
+        /// </summary>
+        public static global::System.IO.FileInfo resolveFile(global::System.IO.FileInfo file)
+        {
+#if NET6_0_OR_GREATER
+            if (file.LinkTarget != null && file.ResolveLinkTarget(true) is global::System.IO.FileInfo target)
+                return target;
+#endif
+            return file;
+        }
+
+        /// <summary>
+        /// The size of a file. FileInfo.Length of a symbolic link is the size of the link
+        /// itself: opening the file follows the link on every runtime.
+        /// </summary>
+        public static long fileLength(global::System.IO.FileInfo file)
+        {
+            if ((file.Attributes & global::System.IO.FileAttributes.ReparsePoint) != 0)
+            {
+                try
+                {
+                    using (var stream = new global::System.IO.FileStream(file.FullName, global::System.IO.FileMode.Open, global::System.IO.FileAccess.Read, global::System.IO.FileShare.ReadWrite))
+                        return stream.Length;
+                }
+                catch (global::System.Exception)
+                {
+                    // a link to nothing, or a file that cannot be read: the size of the entry
+                }
+            }
+            return file.Length;
+        }
+
+        /// <summary>
         /// The value to write by reflection to a field of the given type: a Null&lt;T&gt;
         /// field takes a Null&lt;T&gt;, made here from the value or from null.
         /// </summary>

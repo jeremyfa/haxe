@@ -116,6 +116,25 @@ class TestFileSystem extends utest.Test {
 		}
 	}
 
+	#if cs
+	function testStatOfSymbolicLink() {
+		if (Sys.systemName() == "Windows") {
+			Assert.pass();
+			return;
+		}
+		// stat() describes the file a link leads to, not the link
+		var target = dir + "target.bin";
+		var link = dir + "link.bin";
+		sys.io.File.saveBytes(target, haxe.io.Bytes.alloc(3000));
+		Sys.command("ln", ["-s", FileSystem.absolutePath(target), link]);
+		Assert.isTrue(FileSystem.exists(link));
+		Assert.equals(3000, FileSystem.stat(link).size);
+		Assert.equals(3000, sys.io.File.getBytes(link).length);
+		FileSystem.deleteFile(link);
+		FileSystem.deleteFile(target);
+	}
+	#end
+
 	function testStatDirectory() {
 		var stat = FileSystem.stat(dir);
 		Assert.isTrue(stat != null);

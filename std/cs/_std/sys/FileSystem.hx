@@ -47,14 +47,16 @@ class FileSystem {
 
 	public static function stat(path:String):FileStat {
 		if (File.Exists(path)) {
-			var fi = new FileInfo(path);
+			// A symbolic link is described by the file it leads to
+			var fi:FileInfo = cs.Syntax.code("global::haxe.lang.Runtime.resolveFile(new global::System.IO.FileInfo({0}))", path);
+			var length:haxe.Int64 = cs.Syntax.code("global::haxe.lang.Runtime.fileLength({0})", fi);
 			return {
 				gid: 0,
 				uid: 0,
 				atime: dateFromNative(fi.LastAccessTime),
 				mtime: dateFromNative(fi.LastWriteTime),
 				ctime: dateFromNative(fi.CreationTime),
-				size: cast(fi.Length, Int),
+				size: haxe.Int64.toInt(length),
 				dev: 0,
 				ino: 0,
 				nlink: 0,
