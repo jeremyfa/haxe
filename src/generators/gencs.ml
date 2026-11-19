@@ -171,8 +171,28 @@ let invoke_method_name num_args =
 
 (* Get the Value-based invoke method name: __hx_invoke0, __hx_invoke1, etc.
    These methods return Value to avoid boxing on return values. *)
+(* C# parameter types of the parent's _hx_new, while the body of a constructor that calls
+   it is generated (see the __hx_base_new__ call) *)
+let base_new_arg_types : cs_type list ref = ref []
+
 let hxvalue_invoke_method_name num_args =
 	"__hx_invoke" ^ string_of_int num_args
+
+(* haxe.lang.Function has a typed invoke (one Value per argument) for up to this many
+   arguments *)
+let max_value_invoke_arity = 9
+
+(* Call a function value with its arguments given as Value expressions. The result is a
+   Value. Above max_value_invoke_arity there is no typed invoke: the arguments go
+   through a Haxe array (invokeDynamic). *)
+let make_value_invoke func num_args hxvalue_args =
+	if num_args <= max_value_invoke_arity then
+		CsCall (CsField (func, hxvalue_invoke_method_name num_args), hxvalue_args)
+	else begin
+		let boxed = List.map (fun v -> CsCall (CsField (v, "toDynamic"), [])) hxvalue_args in
+		let array = CsStaticCall (CsTypeClass ((["haxe"; "root"], "Array"), []), "__ofDynLiteral", [CsNewArray (CsTypeObject, boxed)]) in
+		CsStaticCall (CsTypeClass ((["haxe"; "lang"], "Value"), []), "fromObject", [CsCall (CsField (func, "invokeDynamic"), [array])])
+	end
 
 (* Generate Value arguments for closure/function invocation.
    Returns a list of Value.FromXxx(...) calls for each argument.
@@ -1333,7 +1353,7 @@ let rec cs_expr_of_texpr ectx e =
 			let params = List.mapi (fun i _ -> { p_name = Printf.sprintf "_hx_a%d" (i + 1); p_type = None; p_default = None; p_modifier = None }) dargs in
 			let lambda f =
 				let values = List.mapi (fun i t -> cast_type_to_value t (CsLocal (Printf.sprintf "_hx_a%d" (i + 1)))) darg_types in
-				let call = CsCall (CsField (f, hxvalue_invoke_method_name arity), values) in
+				let call = make_value_invoke f arity values in
 				let body = if dret_type = CsTypeVoid then call else cast_value_to_type dret_type call in
 				CsNew (dtype, [CsLambda (params, CsLambdaExpr body)])
 			in
@@ -2903,7 +2923,7 @@ let rec cs_expr_of_texpr ectx e =
 				m_name = hxvalue_invoke_method_name num_params;
 				m_return_type = hxvalue_type;
 				m_access = AccessModifier.Public;
-				m_modifiers = [MemberModifier.Override];
+				m_modifiers = (if num_params > max_value_invoke_arity then [] else [MemberModifier.Override]);
 				m_type_params = [];
 				m_params = fv_params;
 				m_body = Some [CsReturn (Some fv_return)];
@@ -3040,7 +3060,7 @@ let rec cs_expr_of_texpr ectx e =
 		(* Use Value-based invoke to avoid boxing primitives *)
 		let num_args = List.length args_cs in
 		let hxvalue_args = generate_hxvalue_args args_cs param_types_cs in
-		let call_expr = CsCall (CsField (closure, hxvalue_invoke_method_name num_args), hxvalue_args) in
+		let call_expr = make_value_invoke closure num_args hxvalue_args in
 		(* Extract the return value from Value *)
 		cast_value_to_type result_type call_expr
 	| TCall ({ eexpr = TField (_, FEnum (en, ef)) }, orig_args) ->
@@ -3192,7 +3212,7 @@ let rec cs_expr_of_texpr ectx e =
 			(* Use Value-based invoke to avoid boxing primitives *)
 			let num_args = List.length args_cs in
 			let hxvalue_args = generate_hxvalue_args args_cs param_types_cs in
-			let call_expr = CsCall (CsField (func_expr, hxvalue_invoke_method_name num_args), hxvalue_args) in
+			let call_expr = make_value_invoke func_expr num_args hxvalue_args in
 			(* Extract the return value from Value *)
 			cast_value_to_type result_type call_expr
 		end else begin
@@ -3683,7 +3703,7 @@ let rec cs_expr_of_texpr ectx e =
 					let param_types_cs = List.map (cs_type_of_type ectx.gctx) param_types in
 					let hxvalue_args = generate_hxvalue_args args param_types_cs in
 					let func_as_function = CsCast (function_type, field_call) in
-					let call_expr = CsCall (CsField (func_as_function, hxvalue_invoke_method_name num_args), hxvalue_args) in
+					let call_expr = make_value_invoke func_as_function num_args hxvalue_args in
 					let result_type = cs_type_of_type ectx.gctx e.etype in
 					let result_type = CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope result_type in
 					cast_value_to_type result_type call_expr
@@ -3852,7 +3872,7 @@ let rec cs_expr_of_texpr ectx e =
 				let param_types_cs = List.map (cs_type_of_type ectx.gctx) param_types_hx in
 				let hxvalue_args = generate_hxvalue_args args_cs param_types_cs in
 				let func_as_function = CsCast (function_type, func_expr) in
-				let call_expr = CsCall (CsField (func_as_function, hxvalue_invoke_method_name num_args), hxvalue_args) in
+				let call_expr = make_value_invoke func_as_function num_args hxvalue_args in
 				let result_type = cs_type_of_type ectx.gctx return_type in
 				cast_value_to_type result_type call_expr
 			end else begin
@@ -4543,7 +4563,7 @@ let rec cs_expr_of_texpr ectx e =
 			(* Use Value-based invoke to avoid boxing primitives *)
 			let num_args = List.length args_cs in
 			let hxvalue_args = generate_hxvalue_args args_cs param_types_cs in
-			let call_expr = CsCall (CsField (func, hxvalue_invoke_method_name num_args), hxvalue_args) in
+			let call_expr = make_value_invoke func num_args hxvalue_args in
 			(* Extract the return value from Value *)
 			cast_value_to_type result_type call_expr
 		end
@@ -6719,7 +6739,7 @@ let generate_closure_class ectx tf func_type =
 				m_name = "__hx_invoke" ^ string_of_int num_params;
 				m_return_type = hxvalue_type;
 				m_access = AccessModifier.Public;
-				m_modifiers = [MemberModifier.Override];
+				m_modifiers = (if num_params > max_value_invoke_arity then [] else [MemberModifier.Override]);
 				m_type_params = [];
 				m_params = hxvalue_params;
 				m_body = Some body;
@@ -7016,7 +7036,7 @@ and generate_method_closure_fallback ectx obj_expr is_static class_path type_par
 			) invoke_params in
 			let hxvalue_args = generate_hxvalue_args call_args param_types_cs in
 			let func_as_function = CsCast (function_type, func_expr) in
-			let raw_call = CsCall (CsField (func_as_function, hxvalue_invoke_method_name num_args), hxvalue_args) in
+			let raw_call = make_value_invoke func_as_function num_args hxvalue_args in
 			(raw_call, true)
 		end else begin
 			(* Fallback for arity > 9 *)
@@ -7222,7 +7242,7 @@ and generate_method_closure_fallback ectx obj_expr is_static class_path type_par
 				m_name = "__hx_invoke" ^ string_of_int num_params;
 				m_return_type = hxvalue_type;
 				m_access = AccessModifier.Public;
-				m_modifiers = [Override];
+				m_modifiers = (if num_params > max_value_invoke_arity then [] else [Override]);
 				m_type_params = [];
 				m_params = hxvalue_params;
 				m_body = Some body;
@@ -8830,6 +8850,33 @@ let rec extends_haxe_object c =
    In AOT mode (-D cs.aot): full switch-based overrides for all fields and methods.
    In JIT mode (default): only method closure cases in _hx_getField, skip _hx_setField/_hx_getFields
    (base class HaxeObject handles field access via C# reflection). *)
+(* ClassMethodFunction takes a typed lambda (one Value per argument) for up to this many
+   arguments. Above it, the closure of a method is made from a lambda that reads its
+   arguments from a Haxe array, which is what a call through invokeDynamic gives. *)
+let max_typed_method_closure_arity = 9
+
+let dynamic_method_closure_lambda gctx args ret make_call =
+	let args_local = CsLocal "args" in
+	let call_args = List.filter_map (fun (i, (_, _, t)) ->
+		let cs_arg_type = cs_type_of_type gctx t in
+		match cs_arg_type with
+		| CsTypeVoid -> None
+		| _ ->
+			let read = CsCall (CsField (args_local, "__get"), [CsConst (CsConstInt (Int32.of_int i))]) in
+			Some (cast_object_to_type cs_arg_type read)
+	) (List.mapi (fun i arg -> (i, arg)) args) in
+	let method_call = make_call call_args in
+	let cs_ret_type = cs_type_of_type gctx ret in
+	let body = match cs_ret_type with
+		| CsTypeVoid -> CsLambdaBlock [CsExprStmt method_call; CsReturn (Some CsNull)]
+		| _ ->
+			let fresh = let n = ref 0 in fun () -> incr n; Printf.sprintf "_hx_ret%d" !n in
+			CsLambdaExpr (CsTypeCoercion.coerce_cs_types ~fresh_temp:fresh gctx method_call cs_ret_type CsTypeObject)
+	in
+	(* The parameter is typed: a lambda with one untyped parameter would also fit the
+	   constructor that takes one Value *)
+	CsLambda ([{ p_name = "args"; p_type = Some haxe_array_type; p_default = None; p_modifier = None }], body)
+
 let generate_field_accessors gctx c =
 	let is_aot = Common.defined gctx.com DefineList.CsAot in
 	let closure_cache = Common.defined gctx.com DefineList.CsClosureCache in
@@ -9089,7 +9136,12 @@ let generate_field_accessors gctx c =
 					| CsTypeVoid -> CsLambdaBlock [CsExprStmt method_call; CsReturn (Some result_expr)]
 					| _ -> CsLambdaExpr result_expr
 				in
-				let lambda = CsLambda (lambda_params, lambda_body) in
+				let lambda =
+					if arity > max_typed_method_closure_arity then
+						dynamic_method_closure_lambda gctx args ret (fun call_args -> CsCall (CsField (CsThis, native_name), call_args))
+					else
+						CsLambda (lambda_params, lambda_body)
+				in
 				let new_expr = CsNew (class_method_func_type, [lambda]) in
 				{
 					sw_labels = [CsCaseConst (CsConst (CsConstInt (Int32.of_int idx)))];
@@ -9420,7 +9472,12 @@ let generate_static_field_accessors gctx c =
 				| CsTypeVoid -> CsLambdaBlock [CsExprStmt method_call; CsReturn (Some result_expr)]
 				| _ -> CsLambdaExpr result_expr
 			in
-			let lambda = CsLambda (lambda_params, lambda_body) in
+			let lambda =
+				if arity > max_typed_method_closure_arity then
+					dynamic_method_closure_lambda gctx args ret (fun call_args -> CsCall (CsStaticField (cs_class_type, native_name), call_args))
+				else
+					CsLambda (lambda_params, lambda_body)
+			in
 			let new_expr = CsNew (class_method_func_type, [lambda]) in
 			{
 				sw_labels = [CsCaseConst (CsConst (CsConstInt (Int32.of_int idx)))];
