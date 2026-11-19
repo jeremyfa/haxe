@@ -4682,19 +4682,8 @@ let rec cs_expr_of_texpr ectx e =
 				   For expression context, we need a lambda or helper.
 				   Let's generate: ((Func<ClassName>)(() => { var t = new ClassName((EmptyConstructor)null); t._hx_new(args); return t; }))()
 				*)
-				let new_expr = CsNew (class_type, [CsCast (empty_constructor_type, CsNull)]) in
-				(* Create a lambda that creates the object and calls _hx_new *)
-				let hx_new_call = CsCall (CsField (CsLocal "_hx_tmp", "_hx_new"), cs_args) in
-				let return_stmt = CsReturn (Some (CsLocal "_hx_tmp")) in
-				let lambda_body = CsLambdaBlock [
-					CsVarDecl ("_hx_tmp", Some class_type, Some new_expr);
-					CsExprStmt hx_new_call;
-					return_stmt
-				] in
-				let lambda = CsLambda ([], lambda_body) in
-				(* Cast to Func<T> and invoke: ((Func<T>)(() => {...}))() *)
-				let func_type = CsTypeClass ((["System"], "Func"), [class_type]) in
-				CsCall (CsParens (CsCast (func_type, lambda)), [])
+				(* The static method of the class that makes the two calls (see generate_constructor) *)
+				CsStaticCall (class_type, "_hx_make", cs_args)
 			else
 				CsNew (class_type, cs_args)
 			in
@@ -8688,7 +8677,37 @@ let generate_constructor gctx c cf field_init_stmts =
 			m_attributes = [];
 		} in
 
-		[empty_ctor; hx_new_method]
+		(* `new C(args)` of such a class is two calls (the empty constructor, then _hx_new).
+		   A static method makes them, so that an expression can create the object without
+		   wrapping the two calls in a lambda, which allocates a delegate each time. *)
+		let factory =
+			if has_class_flag c CAbstract then []
+			else begin
+				let class_cs_type = CsTypeClass (cs_path_of_path c.cl_path, []) in
+				let call_args = List.map (fun p -> match p.p_modifier with
+					| Some CsParamRef -> CsRaw ("ref " ^ p.p_name)
+					| Some CsParamOut -> CsRaw ("out " ^ p.p_name)
+					| _ -> CsLocal p.p_name
+				) ctor_params in
+				[CsMemberMethod {
+					m_name = "_hx_make";
+					m_access = AccessModifier.Public;
+					m_modifiers = [MemberModifier.Static];
+					m_type_params = [];
+					m_params = ctor_params;
+					m_return_type = class_cs_type;
+					m_body = Some [
+						CsVarDecl ("_hx_tmp", Some class_cs_type, Some (CsNew (class_cs_type, [CsCast (empty_constructor_type, CsNull)])));
+						CsExprStmt (CsCall (CsField (CsLocal "_hx_tmp", "_hx_new"), call_args));
+						CsReturn (Some (CsLocal "_hx_tmp"));
+					];
+					m_constraints = [];
+					m_explicit_interface = None;
+					m_attributes = [];
+				}]
+			end
+		in
+		[empty_ctor; hx_new_method] @ factory
 	end else begin
 		(* NORMAL CONSTRUCTION: no this-before-super issue *)
 
@@ -10984,12 +11003,14 @@ let generate com =
 		| _ -> ()
 	) com.types;
 
-	(* A constructor whose super(...) arguments use locals of the statements before it
-	   cannot be a plain C# constructor: `: base(...)` is evaluated before any statement.
-	   It is generated like the constructors that use `this` before super(): a _hx_new
-	   method with the body in the order of the source. Its Haxe ancestors need _hx_new
-	   too, to be called from it. (With a native parent, the arguments have to be computed
-	   in the `: base(...)` call itself: nothing is changed.) *)
+	(* A constructor with statements before super(...) cannot be a plain C# constructor:
+	   `: base(...)` runs before any statement. The arguments of super() can use locals
+	   that these statements compute, and the constructor of the parent can depend on what
+	   they do (a static flag set before super() and read by the parent, for example).
+	   Such a constructor is generated like those that use `this` before super(): a
+	   _hx_new method with the body in the order of the source. Its Haxe ancestors need
+	   _hx_new too, to be called from it. (With a native parent, its constructor has to be
+	   called by `: base(...)` itself: nothing is changed.) *)
 	let rec mark_two_phase c =
 		let mark_parent () = match c.cl_super with
 			| Some (sc, _) when not (has_class_flag sc CExtern) -> mark_two_phase sc
@@ -11009,7 +11030,9 @@ let generate com =
 			begin match cf.cf_expr with
 			| Some e ->
 				begin match extract_super_call e with
-				| (Some args, pre, _) when super_args_reference_body_locals args pre -> mark_two_phase c
+				| (Some _, Some { eexpr = TBlock (_ :: _) }, _) -> mark_two_phase c
+				| (Some _, Some { eexpr = (TBlock []) }, _) -> ()
+				| (Some _, Some _, _) -> mark_two_phase c
 				| _ -> ()
 				end
 			| None -> ()
