@@ -9032,6 +9032,13 @@ let rec extends_haxe_object c =
 		else
 			extends_haxe_object sc  (* Check the superclass *)
 
+(* The value of a field as reflection gives it: a Null<T> is its value or null, not
+   the Null<T> itself in a box (which is never null). *)
+let reflected_field_value field_type value =
+	match field_type with
+	| CsTypeClass ((["haxe"; "lang"], "Null"), _) -> CsCall (CsField (value, "toDynamic"), [])
+	| _ -> value
+
 (* Generate _hx_getField, _hx_setField, _hx_getFields, method closure infrastructure.
    In AOT mode (-D cs.aot): full switch-based overrides for all fields and methods.
    In JIT mode (default): only method closure cases in _hx_getField, skip _hx_setField/_hx_getFields
@@ -9198,10 +9205,10 @@ let generate_field_accessors gctx c =
 		       }
 		   }
 		*)
-		let get_field_sections = List.map (fun (haxe_name, native_name, _) ->
+		let get_field_sections = List.map (fun (haxe_name, native_name, field_type) ->
 			{
 				sw_labels = [CsCaseConst (CsConst (CsConstString haxe_name))];
-				sw_body = [CsReturn (Some (CsField (CsThis, native_name)))];
+				sw_body = [CsReturn (Some (reflected_field_value field_type (CsField (CsThis, native_name))))];
 			}
 		) instance_fields in
 		let get_method_sections = List.map (fun (idx, name, _, _, _, _) ->
@@ -9739,10 +9746,10 @@ let generate_static_field_accessors gctx c =
 	       }
 	   }
 	*)
-	let get_field_sections = List.map (fun (name, native_name, _) ->
+	let get_field_sections = List.map (fun (name, native_name, field_type) ->
 		{
 			sw_labels = [CsCaseConst (CsConst (CsConstString name))];
-			sw_body = [CsReturn (Some (CsStaticField (cs_class_type, native_name)))];
+			sw_body = [CsReturn (Some (reflected_field_value field_type (CsStaticField (cs_class_type, native_name))))];
 		}
 	) static_fields in
 	let get_method_sections = List.map (fun (idx, name, _, _, _, _) ->

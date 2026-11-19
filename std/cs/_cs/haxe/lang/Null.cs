@@ -7,6 +7,15 @@ using System.Collections.Generic;
 namespace haxe.lang
 {
     /// <summary>
+    /// What every Null&lt;T&gt; is: lets the runtime take the value out of one that
+    /// reflection read from a field, where it comes in a box.
+    /// </summary>
+    public interface INullValue
+    {
+        object toDynamic();
+    }
+
+    /// <summary>
     /// Wrapper struct for nullable values that provides unified semantics
     /// across both value types and reference types.
     ///
@@ -23,7 +32,7 @@ namespace haxe.lang
     /// Use .toDynamic() to convert Null&lt;T&gt; to object (returns boxed T or null).
     /// If you encounter a boxed Null&lt;T&gt; at runtime, fix the code generator.
     /// </summary>
-    public struct Null<T>
+    public struct Null<T> : INullValue
     {
         /// <summary>
         /// Creates a Null&lt;T&gt; from a dynamic value with proper type conversion.

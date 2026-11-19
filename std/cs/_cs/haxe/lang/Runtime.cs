@@ -706,6 +706,31 @@ namespace haxe.lang
         }
 
         /// <summary>
+        /// The value of a field read by reflection: a Null&lt;T&gt; comes out of
+        /// FieldInfo.GetValue in a box, which is never null. This gives its value, or null.
+        /// </summary>
+        public static object unboxNull(object value)
+        {
+            if (value is global::haxe.lang.INullValue n) return n.toDynamic();
+            return value;
+        }
+
+        /// <summary>
+        /// The value to write by reflection to a field of the given type: a Null&lt;T&gt;
+        /// field takes a Null&lt;T&gt;, made here from the value or from null.
+        /// </summary>
+#if NET5_0_OR_GREATER
+        [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
+            Justification = "Fallback reflection; Haxe objects use _hx_setField in AOT")]
+#endif
+        public static object boxNull(global::System.Type type, object value)
+        {
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(global::haxe.lang.Null<>))
+                return type.GetMethod("_ofDynamic").Invoke(null, new object[] { value });
+            return value;
+        }
+
+        /// <summary>
         /// Get a field from an object dynamically.
         /// For HaxeObject subclasses, uses _hx_getField (AOT-safe).
         /// For other objects, uses reflection (may not work in AOT for all types).
@@ -741,11 +766,11 @@ namespace haxe.lang
 
             // Try field first
             var field = type.GetField(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (field != null) return field.GetValue(obj);
+            if (field != null) return unboxNull(field.GetValue(obj));
 
             // Try property
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (prop != null) return prop.GetValue(obj);
+            if (prop != null) return unboxNull(prop.GetValue(obj));
 
             // Try method (e.g. the get_Item accessor of an indexer)
             return getNativeMethod(obj, type, name);
@@ -792,7 +817,7 @@ namespace haxe.lang
             var field = type.GetField(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
             if (field != null)
             {
-                field.SetValue(obj, value);
+                field.SetValue(obj, boxNull(field.FieldType, value));
                 return value;
             }
 
@@ -800,7 +825,7 @@ namespace haxe.lang
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
             if (prop != null)
             {
-                prop.SetValue(obj, value);
+                prop.SetValue(obj, boxNull(prop.PropertyType, value));
                 return value;
             }
 
@@ -833,7 +858,7 @@ namespace haxe.lang
             var field = type.GetField(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
             if (field != null)
             {
-                field.SetValue(obj, value);
+                field.SetValue(obj, boxNull(field.FieldType, value));
                 return value;
             }
 
@@ -841,7 +866,7 @@ namespace haxe.lang
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
             if (prop != null)
             {
-                prop.SetValue(obj, value);
+                prop.SetValue(obj, boxNull(prop.PropertyType, value));
                 return value;
             }
 

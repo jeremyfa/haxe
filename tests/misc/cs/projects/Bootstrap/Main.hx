@@ -53,6 +53,7 @@ class Main {
 		testTypedLambdasWithMiddleOptional();
 		testMethodReferences();
 		testMethodReferencesWithOptionals();
+		testReflectionOnNullFields();
 		testStaticMethodReferences();
 		testHigherOrderFunctions();
 		testLambdaAssignments();
@@ -87,6 +88,37 @@ class Main {
 			var line = p != null ? p.lineNumber : 0;
 			cs.Syntax.code("global::System.Console.WriteLine({0})", 'FAIL at line $line: expected $expected, got $actual');
 		}
+	}
+
+	static function testReflectionOnNullFields() {
+		// Reflection gives the value of a Null<T> field or null, and takes either
+		var c = new NullFields();
+		var d:Dynamic = c;
+		t(Reflect.field(c, "a") == null && Reflect.field(c, "i") == null && Reflect.field(c, "k") == null);
+		eq(24.0, (Reflect.field(c, "b") : Float));
+		eq(3, (Reflect.field(c, "j") : Int));
+		t(Reflect.field(NullFields, "s") == null);
+		eq(5, (Reflect.field(NullFields, "t") : Int));
+		t(d.a == null && d.i == null && d.b == 24.0);
+		eq(4, (d.j + 1 : Int));
+		t(Reflect.getProperty(c, "p") == null);
+		eq("null/3", Std.string(Reflect.field(c, "a")) + "/" + Std.string(Reflect.field(c, "j")));
+		Reflect.setField(c, "a", 2.5);
+		Reflect.setField(c, "j", null);
+		Reflect.setField(c, "i", 7);
+		Reflect.setProperty(c, "p", 9);
+		t(c.a == 2.5 && c.j == null && c.i == 7 && c.p == 9);
+		// copied by name, as a configuration is
+		var from = new NullFields();
+		from.i = 1;
+		var to = new NullFields();
+		to.b = null;
+		for (key in ["a", "b", "i", "j"]) {
+			var value:Null<Float> = Reflect.field(from, key);
+			if (value != null)
+				Reflect.setField(to, key, value);
+		}
+		t(to.a == null && to.b == 24.0 && to.i == 1 && to.j == 3);
 	}
 
 	static function t(v:Bool, ?p:PosInfos) {
@@ -2357,6 +2389,25 @@ typedef TShape = {
 	function move(x:Int, y:Float):Void;
 	function describe(name:String):String;
 	function area():Float;
+}
+
+@:keep class NullFields {
+	public var a:Null<Float> = null;
+	public var b:Null<Float> = 24.0;
+	public var i:Null<Int> = null;
+	public var j:Null<Int> = 3;
+	public var k:Null<Bool> = null;
+	public static var s:Null<Float> = null;
+	public static var t:Null<Int> = 5;
+	@:isVar public var p(get, set):Null<Int> = null;
+
+	public function new() {}
+
+	function get_p()
+		return p;
+
+	function set_p(v)
+		return p = v;
 }
 
 class ShapeClass {

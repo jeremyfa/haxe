@@ -107,9 +107,9 @@ namespace haxe.lang
             // Default: use reflection (works in JIT, may fail in AOT for some types)
             var type = this.GetType();
             var field = type.GetField(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (field != null) return field.GetValue(this);
+            if (field != null) return global::haxe.lang.Runtime.unboxNull(field.GetValue(this));
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (prop != null) return prop.GetValue(this);
+            if (prop != null) return global::haxe.lang.Runtime.unboxNull(prop.GetValue(this));
             return null;
         }
 
@@ -126,9 +126,9 @@ namespace haxe.lang
             // Default: use reflection (works in JIT, may fail in AOT for some types)
             var type = this.GetType();
             var field = type.GetField(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (field != null) { field.SetValue(this, value); return; }
+            if (field != null) { field.SetValue(this, global::haxe.lang.Runtime.boxNull(field.FieldType, value)); return; }
             var prop = type.GetProperty(name, global::System.Reflection.BindingFlags.Public | global::System.Reflection.BindingFlags.Instance);
-            if (prop != null) { prop.SetValue(this, value); return; }
+            if (prop != null) { prop.SetValue(this, global::haxe.lang.Runtime.boxNull(prop.PropertyType, value)); return; }
         }
 
         public virtual bool _hx_deleteField(string name)

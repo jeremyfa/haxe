@@ -93,13 +93,13 @@ class Reflect {
 		// Try field first
 		var fieldInfo:Dynamic = cs.Syntax.code("((global::System.Type){0}).GetField({1})", nativeType, field);
 		if (fieldInfo != null) {
-			return cs.Syntax.code("((global::System.Reflection.FieldInfo){0}).GetValue({1})", fieldInfo, o);
+			return cs.Syntax.code("global::haxe.lang.Runtime.unboxNull(((global::System.Reflection.FieldInfo){0}).GetValue({1}))", fieldInfo, o);
 		}
 
 		// Try property
 		var propInfo:Dynamic = cs.Syntax.code("((global::System.Type){0}).GetProperty({1})", nativeType, field);
 		if (propInfo != null) {
-			return cs.Syntax.code("((global::System.Reflection.PropertyInfo){0}).GetValue({1})", propInfo, o);
+			return cs.Syntax.code("global::haxe.lang.Runtime.unboxNull(((global::System.Reflection.PropertyInfo){0}).GetValue({1}))", propInfo, o);
 		}
 
 		// Try method (return as closure)
@@ -134,14 +134,14 @@ class Reflect {
 		// Try field first
 		var fieldInfo:Dynamic = cs.Syntax.code("((global::System.Type){0}).GetField({1})", nativeType, field);
 		if (fieldInfo != null) {
-			cs.Syntax.code("((global::System.Reflection.FieldInfo){0}).SetValue({1}, {2})", fieldInfo, o, value);
+			cs.Syntax.code("((global::System.Reflection.FieldInfo){0}).SetValue({1}, global::haxe.lang.Runtime.boxNull(((global::System.Reflection.FieldInfo){0}).FieldType, {2}))", fieldInfo, o, value);
 			return;
 		}
 
 		// Try property
 		var propInfo:Dynamic = cs.Syntax.code("((global::System.Type){0}).GetProperty({1})", nativeType, field);
 		if (propInfo != null) {
-			cs.Syntax.code("((global::System.Reflection.PropertyInfo){0}).SetValue({1}, {2})", propInfo, o, value);
+			cs.Syntax.code("((global::System.Reflection.PropertyInfo){0}).SetValue({1}, global::haxe.lang.Runtime.boxNull(((global::System.Reflection.PropertyInfo){0}).PropertyType, {2}))", propInfo, o, value);
 			return;
 		}
 	}
