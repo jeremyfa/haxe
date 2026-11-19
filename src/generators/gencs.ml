@@ -4408,6 +4408,17 @@ let rec cs_expr_of_texpr ectx e =
 					name data_cs
 			) resources in
 			CsRaw (Printf.sprintf "global::haxe.root.Array.__ofDynLiteral(new object[] { %s })" (String.concat ", " items))
+	| TCall ({ eexpr = TIdent "__hx_base_new__" }, args) ->
+		(* super(...) of a constructor generated as _hx_new, whose parent has _hx_new too
+		   (see generate_constructor): the arguments are cast to the parameter types of the
+		   parent *)
+		let expected = !base_new_arg_types in
+		let cs_args = List.mapi (fun i arg ->
+			let cs_arg = cs_expr_of_texpr ectx arg in
+			if i < List.length expected then CsCast (List.nth expected i, CsParens cs_arg)
+			else cs_arg
+		) args in
+		CsCall (CsField (CsBase, "_hx_new"), cs_args)
 	| TCall ({ eexpr = TConst TSuper }, _) ->
 		(* super() calls should be extracted and converted to : base() initializer *)
 		(* If we get here, the super call is in an unexpected location *)
@@ -8493,34 +8504,102 @@ let generate_constructor gctx c cf field_init_stmts =
 		   IMPORTANT: Pre-super statements must execute BEFORE base._hx_new() because
 		   the parent constructor may call virtual methods that access fields set by
 		   pre-super code (e.g., CoroBaseTask sets this.context before super()). *)
-		let hx_new_body =
-			(* Extract dependency statements from pre-super body: locals that are
-			   referenced by super args need to be defined before base._hx_new(). *)
-			let (dependency_stmts, adjusted_pre_super_body_expr) = match super_args with
-				| Some args when super_args_reference_body_locals args pre_super_body_expr ->
-					let local_ids = collect_locals_used args in
-					extract_local_dependencies pre_super_body_expr local_ids
-				| _ -> ([], pre_super_body_expr)
-			in
-			(* ALL pre-super stmts go before base._hx_new() so the parent constructor
-			   can access fields set by the child via virtual dispatch. *)
-			let pre_super_cs_stmts = match adjusted_pre_super_body_expr with
-				| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
-				| None -> []
-			in
-			(* Assignments to INHERITED fields (not declared in this class) must also be
-			   duplicated AFTER base._hx_new() to override the parent's field initialization.
-			   Own-field assignments don't need this since the parent won't touch them. *)
-			let inherited_reassign_cs_stmts =
-				let inherited_assigns = collect_inherited_field_assigns c adjusted_pre_super_body_expr in
-				match inherited_assigns with
-				| [] -> []
-				| (first :: _) as assigns ->
-					generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" { first with eexpr = TBlock assigns }
-			in
-			let dependency_cs_stmts = match dependency_stmts with
-				| [] -> []
-				| stmts ->
+		let hx_new_body = match super_args with
+			| Some super_call_args when parent_is_two_phase ->
+				(* The parent has _hx_new too: the body is generated in one piece, in the order
+				   of the source, with super(...) as a call to base._hx_new(...) where it is.
+				   One piece means one context: the locals of the statements before super()
+				   (those of an inlined call for example) keep their names for its arguments
+				   and for what follows. *)
+				let stmts_of = function
+					| Some { eexpr = TBlock el } -> el
+					| Some e -> [e]
+					| None -> []
+				in
+				let pos = cf.cf_pos in
+				let base_new = mk (TCall (mk (TIdent "__hx_base_new__") t_dynamic pos, super_call_args)) gctx.com.basic.tvoid pos in
+				(* Assignments to INHERITED fields made before super() are done again after it:
+				   the parent initializes its own fields when it is constructed. *)
+				let inherited_assigns = collect_inherited_field_assigns c pre_super_body_expr in
+				let whole = mk (TBlock (stmts_of pre_super_body_expr @ [base_new] @ inherited_assigns @ stmts_of post_super_body_expr)) gctx.com.basic.tvoid pos in
+				(* Given as a function: its arguments are registered under their names before the
+				   body is generated (an inlined call can declare a local of the same name), and
+				   the default values of the optional ones are applied first. *)
+				let whole = match cf.cf_expr with
+					| Some ({ eexpr = TFunction tf } as fe) -> { fe with eexpr = TFunction { tf with tf_expr = whole } }
+					| _ -> whole
+				in
+				base_new_arg_types := base_ctor_types;
+				let body_stmts = generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"_hx_new" whole in
+				base_new_arg_types := [];
+				field_init_stmts @ body_stmts
+			| _ ->
+				(* Extract dependency statements from pre-super body: locals that are
+				   referenced by super args need to be defined before base._hx_new(). *)
+				let (dependency_stmts, adjusted_pre_super_body_expr) = match super_args with
+					| Some args when super_args_reference_body_locals args pre_super_body_expr ->
+						let local_ids = collect_locals_used args in
+						extract_local_dependencies pre_super_body_expr local_ids
+					| _ -> ([], pre_super_body_expr)
+				in
+				(* ALL pre-super stmts go before base._hx_new() so the parent constructor
+				   can access fields set by the child via virtual dispatch. *)
+				let pre_super_cs_stmts = match adjusted_pre_super_body_expr with
+					| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
+					| None -> []
+				in
+				(* Assignments to INHERITED fields (not declared in this class) must also be
+				   duplicated AFTER base._hx_new() to override the parent's field initialization.
+				   Own-field assignments don't need this since the parent won't touch them. *)
+				let inherited_reassign_cs_stmts =
+					let inherited_assigns = collect_inherited_field_assigns c adjusted_pre_super_body_expr in
+					match inherited_assigns with
+					| [] -> []
+					| (first :: _) as assigns ->
+						generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" { first with eexpr = TBlock assigns }
+				in
+				let dependency_cs_stmts = match dependency_stmts with
+					| [] -> []
+					| stmts ->
+						let ectx = create_expr_context gctx in
+						ectx.current_class_path <- Some c.cl_path;
+						ectx.current_method_name <- Some "_hx_new";
+						List.iter (fun (v, _) ->
+							let param_name = escape_identifier v.v_name in
+							ectx.local_vars <- (v.v_id, param_name) :: ectx.local_vars;
+							ectx.used_names <- param_name :: ectx.used_names
+						) tf_args;
+						List.map (cs_stmt_of_texpr ectx) stmts
+				in
+				(* Generate base._hx_new(args) call if there was a super call *)
+				let base_new_call = match super_args with
+					| Some args when parent_is_two_phase ->
+						let ectx = create_expr_context gctx in
+						ectx.current_class_path <- Some c.cl_path;
+						ectx.current_method_name <- Some "_hx_new";
+						let cs_args = List.mapi (fun i arg ->
+							let cs_arg = cs_expr_of_texpr ectx arg in
+							if i < List.length base_ctor_types then
+								let expected_type = List.nth base_ctor_types i in
+								CsCast (expected_type, CsParens cs_arg)
+							else
+								cs_arg
+						) args in
+						[CsExprStmt (CsCall (CsField (CsBase, "_hx_new"), cs_args))]
+					| Some _ ->
+						(* Parent doesn't need two-phase, but we do.
+						   Parent's ctor was already called via the empty ctor's base() call,
+						   so no need to call base._hx_new() here. *)
+						[]
+					| None -> []
+				in
+				(* Post-super body (statements after the super call) *)
+				let post_super_stmts = match post_super_body_expr with
+					| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
+					| None -> []
+				in
+				(* Generate preamble for optional parameters with default values *)
+				let default_preamble = if tf_args = [] then [] else begin
 					let ectx = create_expr_context gctx in
 					ectx.current_class_path <- Some c.cl_path;
 					ectx.current_method_name <- Some "_hx_new";
@@ -8529,49 +8608,10 @@ let generate_constructor gctx c cf field_init_stmts =
 						ectx.local_vars <- (v.v_id, param_name) :: ectx.local_vars;
 						ectx.used_names <- param_name :: ectx.used_names
 					) tf_args;
-					List.map (cs_stmt_of_texpr ectx) stmts
-			in
-			(* Generate base._hx_new(args) call if there was a super call *)
-			let base_new_call = match super_args with
-				| Some args when parent_is_two_phase ->
-					let ectx = create_expr_context gctx in
-					ectx.current_class_path <- Some c.cl_path;
-					ectx.current_method_name <- Some "_hx_new";
-					let cs_args = List.mapi (fun i arg ->
-						let cs_arg = cs_expr_of_texpr ectx arg in
-						if i < List.length base_ctor_types then
-							let expected_type = List.nth base_ctor_types i in
-							CsCast (expected_type, CsParens cs_arg)
-						else
-							cs_arg
-					) args in
-					[CsExprStmt (CsCall (CsField (CsBase, "_hx_new"), cs_args))]
-				| Some _ ->
-					(* Parent doesn't need two-phase, but we do.
-					   Parent's ctor was already called via the empty ctor's base() call,
-					   so no need to call base._hx_new() here. *)
-					[]
-				| None -> []
-			in
-			(* Post-super body (statements after the super call) *)
-			let post_super_stmts = match post_super_body_expr with
-				| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
-				| None -> []
-			in
-			(* Generate preamble for optional parameters with default values *)
-			let default_preamble = if tf_args = [] then [] else begin
-				let ectx = create_expr_context gctx in
-				ectx.current_class_path <- Some c.cl_path;
-				ectx.current_method_name <- Some "_hx_new";
-				List.iter (fun (v, _) ->
-					let param_name = escape_identifier v.v_name in
-					ectx.local_vars <- (v.v_id, param_name) :: ectx.local_vars;
-					ectx.used_names <- param_name :: ectx.used_names
-				) tf_args;
-				generate_optional_param_defaults ectx gctx tf_args
-			end in
-			(* Order: field_inits, defaults, pre-super body, dependency stmts, base._hx_new(), inherited field reassigns, post-super *)
-			field_init_stmts @ default_preamble @ pre_super_cs_stmts @ dependency_cs_stmts @ base_new_call @ inherited_reassign_cs_stmts @ post_super_stmts
+					generate_optional_param_defaults ectx gctx tf_args
+				end in
+				(* Order: field_inits, defaults, pre-super body, dependency stmts, base._hx_new(), inherited field reassigns, post-super *)
+				field_init_stmts @ default_preamble @ pre_super_cs_stmts @ dependency_cs_stmts @ base_new_call @ inherited_reassign_cs_stmts @ post_super_stmts
 		in
 		(* Wrap in unchecked if the constructor expression contains non-zero integer constants *)
 		let hx_new_body = match cf.cf_expr with
