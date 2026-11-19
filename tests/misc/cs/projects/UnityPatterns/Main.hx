@@ -40,6 +40,7 @@ class Main {
 		test("reflection without Program.Main", testReflectionWithoutMain);
 		test("@:classCode", testClassCode);
 		test("inline C# with braces", testInlineCodeBraces);
+		test("string constants with special characters", testStringConstants);
 		test("extern class of the root package", testRootExtern);
 		test("final class with statements before super()", testFinalTwoPhase);
 		test("methods with many arguments", testManyArguments);
@@ -130,6 +131,21 @@ class Main {
 		t(three == 3);
 		var viaLambda:Int = cs.Syntax.code("((global::System.Func<int, int>)(v => {return v + {0};}))(40)", 2);
 		t(viaLambda == 42);
+	}
+
+	static function testStringConstants() {
+		// Characters that end a line for the C# compiler, controls, the byte order mark
+		var lines = "a\u2028b\u2029c\u0085d";
+		t(lines.length == 7 && lines.charCodeAt(1) == 0x2028 && lines.charCodeAt(3) == 0x2029 && lines.charCodeAt(5) == 0x85);
+		var controls = "\x00\x01\x1F\x7F\u009F";
+		t(controls.length == 5 && controls.charCodeAt(0) == 0 && controls.charCodeAt(3) == 0x7F && controls.charCodeAt(4) == 0x9F);
+		var bom = "\uFEFFx";
+		t(bom.length == 2 && bom.charCodeAt(0) == 0xFEFF);
+		// kept as they are
+		var text = "é ÷ 日本 😀 \"quoted\" back\\slash";
+		t(text.length == 29 && text.charCodeAt(0) == 0xE9 && text.indexOf("😀") == 7);
+		var followed = "\x05B";
+		t(followed.length == 2 && followed.charCodeAt(0) == 5 && followed.charCodeAt(1) == 0x42);
 	}
 
 	static function testRootExtern() {
@@ -1221,7 +1237,7 @@ class Task<T> {
 }
 
 class Table<T> {
-	public function new() {}
+	public function new(?_:Int, ?_:String) {}
 
 	public function onClick(_:Int, row:T, _:String):T {
 		return row;
