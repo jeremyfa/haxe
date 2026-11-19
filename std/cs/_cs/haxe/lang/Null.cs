@@ -154,6 +154,31 @@ namespace haxe.lang
             return !(a == b);
         }
 
+        // Ordering of two Null<T>, each operand evaluated once (the generated code uses
+        // them when an operand is a call). A missing value is not less or greater than
+        // anything; two missing values are <= and >= each other, like two nulls.
+        public static bool lt(global::haxe.lang.Null<T> a, global::haxe.lang.Null<T> b)
+        {
+            return a.hasValue && b.hasValue && global::System.Collections.Generic.Comparer<T>.Default.Compare(a.value, b.value) < 0;
+        }
+
+        public static bool gt(global::haxe.lang.Null<T> a, global::haxe.lang.Null<T> b)
+        {
+            return a.hasValue && b.hasValue && global::System.Collections.Generic.Comparer<T>.Default.Compare(a.value, b.value) > 0;
+        }
+
+        public static bool lte(global::haxe.lang.Null<T> a, global::haxe.lang.Null<T> b)
+        {
+            if (!a.hasValue || !b.hasValue) return !a.hasValue && !b.hasValue;
+            return global::System.Collections.Generic.Comparer<T>.Default.Compare(a.value, b.value) <= 0;
+        }
+
+        public static bool gte(global::haxe.lang.Null<T> a, global::haxe.lang.Null<T> b)
+        {
+            if (!a.hasValue || !b.hasValue) return !a.hasValue && !b.hasValue;
+            return global::System.Collections.Generic.Comparer<T>.Default.Compare(a.value, b.value) >= 0;
+        }
+
         public override bool Equals(object obj)
         {
             if (obj == null) return !hasValue;

@@ -716,6 +716,25 @@ namespace haxe.lang
         }
 
         /// <summary>
+        /// a[i]++ and a[i]-- on an array of objects (an Array of Null&lt;Int&gt;, of Dynamic):
+        /// adds to the number the element holds and stores the result. Returns the old
+        /// value for a postfix operator, the new one otherwise.
+        /// </summary>
+        public static object arrayIncrement(object[] array, int index, int delta, bool postfix)
+        {
+            object old = array[index];
+            object result;
+            if (old is int i) result = unchecked(i + delta);
+            else if (old is double d) result = d + delta;
+            else if (old is long l) result = unchecked(l + delta);
+            else if (old is float f) result = (double)f + delta;
+            else if (old == null) throw new global::System.NullReferenceException();
+            else result = toDouble(old) + delta;
+            array[index] = result;
+            return postfix ? old : result;
+        }
+
+        /// <summary>
         /// The file a path leads to: for a symbolic link, the file at the end of the
         /// links, which is what stat() describes. Before .NET 6 (Unity) the link cannot
         /// be resolved: the file is returned as it is, see fileLength().

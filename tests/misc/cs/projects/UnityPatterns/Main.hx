@@ -75,6 +75,8 @@ class Main {
 		test("element changed in place in an array stored another way", testInPlaceOnOtherStorage);
 		test("Null value written to a field of a Dynamic object", testNullValueToDynamicField);
 		test("conditional between a value and a Bool, as a Dynamic", testConditionalWithBool);
+		test("comparison of a call that returns a Null number", testNullCallComparedOnce);
+		test("increment of an element of an array of objects", testIncrementOfObjectElement);
 		test("object literals given to structures", testObjectLiteralsForStructures);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
@@ -818,6 +820,43 @@ class Main {
 			seen.push(Std.string(option) + "/" + Std.string(other) + "/" + Std.string(number));
 		}
 		t(seen.join(" ") == "false/[c]/false [a,b]/true/5");
+	}
+
+	static function testNullCallComparedOnce() {
+		// The call is made once: a pop that is compared pops one value
+		var stack:Array<ErrorCode> = [TooBig, TooSmall, TooBig];
+		t(!(stack.pop() != TooBig) && stack.length == 2);
+		t(stack.pop() == TooSmall && stack.length == 1);
+		t(stack.pop() != TooSmall && stack.length == 0 && !(stack.pop() == TooBig) && stack.pop() != TooBig);
+		var ints = [3, 4];
+		t(ints.pop() > 3 && ints.pop() <= 3 && ints.length == 0);
+		// nothing left: no value is neither less nor greater than a number
+		var geq = ints.pop() >= 0;
+		var lt = ints.pop() < 1;
+		t(!geq && !lt);
+		var some = new CallCounter(5);
+		t(some.value == 5 && !(some.value != 5) && some.value > 4 && !(some.value <= 4) && some.next() >= 5 && 5 == some.next());
+		t(some.calls == 6);
+		var none = new CallCounter(null);
+		var results = [none.value == 5, none.value != 5, none.value > 4, none.next() <= 4, none.next() >= none.next(), some.next() == none.next()];
+		t(results.join(",") == "false,true,false,false,true,false");
+		t(none.calls == 7);
+	}
+
+	static function testIncrementOfObjectElement() {
+		var list:Array<Null<Int>> = [1, 5];
+		var before = list[0]++;
+		var after = ++list[1];
+		list[0]--;
+		t(before == 1 && after == 6 && list.join(",") == "1,6");
+		// a captured Null<Int> is kept in such an array
+		var index:Null<Int> = 0;
+		var step = () -> {
+			index++;
+			return index;
+		};
+		step();
+		t(step() == 2 && index == 2);
 	}
 
 	static function testObjectLiteralsForStructures() {
@@ -2348,4 +2387,24 @@ class RatioOption extends ValueOption<Float> {
 
 	override public function pick(value:Float):Float
 		return value * 2;
+}
+
+class CallCounter {
+	public var calls = 0;
+	public var value(get, never):Null<Int>;
+
+	var stored:Null<Int>;
+
+	public function new(stored:Null<Int>)
+		this.stored = stored;
+
+	function get_value():Null<Int> {
+		calls++;
+		return stored;
+	}
+
+	public function next():Null<Int> {
+		calls++;
+		return stored;
+	}
 }

@@ -1915,6 +1915,51 @@ let rec cs_expr_of_texpr ectx e =
 				if expr_produces_csharp_null_type ectx.gctx e then CsField (CsParens cs, "value") else cs
 			in
 			CsBinop (cs_binop_of_binop op, value e1, value e2)
+		| (OpGt | OpGte | OpLt | OpLte | OpEq | OpNotEq) when
+			(* A Null<T> operand that is a call (a.pop(), a property with a getter): the
+			   cases below write it twice, to test hasValue and to read value, which would
+			   call it twice. Both operands are given once to the operators and the
+			   functions of Null<T>. *)
+			(let rec cheap e = match e.eexpr with
+				| TConst _ | TLocal _ | TTypeExpr _ -> true
+				| TParenthesis e | TMeta (_, e) | TCast (e, None) -> cheap e
+				| TField (o, (FInstance (_, _, cf) | FStatic (_, cf) | FAnon cf)) ->
+					(match cf.cf_kind with
+					| Var { v_read = AccCall } -> false
+					| Var _ -> cheap o
+					| _ -> false)
+				| _ -> false
+			in
+			let n1 = expr_produces_csharp_null_type ectx.gctx e1 in
+			let n2 = expr_produces_csharp_null_type ectx.gctx e2 in
+			let inner e = match cs_type_of_type ectx.gctx e.etype with
+				| CsTypeClass ((["haxe"; "lang"], "Null"), [t]) -> t
+				| t -> t
+			in
+			(n1 || n2) && not (is_null_expr e1) && not (is_null_expr e2)
+			&& ((n1 && not (cheap e1)) || (n2 && not (cheap e2)))
+			&& inner e1 = inner e2
+			&& (match inner e1 with CsTypeInt | CsTypeDouble | CsTypeBool | CsTypeString -> true | _ -> false)) ->
+			let inner_t = match cs_type_of_type ectx.gctx e1.etype with
+				| CsTypeClass ((["haxe"; "lang"], "Null"), [t]) -> t
+				| t -> t
+			in
+			let null_t = CsTypeClass ((["haxe"; "lang"], "Null"), [inner_t]) in
+			let operand e =
+				let cs = cs_expr_of_texpr ectx e in
+				if expr_produces_csharp_null_type ectx.gctx e then cs
+				else CsNew (null_t, [cs; CsConst (CsConstBool true)])
+			in
+			let a = operand e1 in
+			let b = operand e2 in
+			begin match op with
+			| OpEq -> CsParens (CsBinop (CsOpEq, a, b))
+			| OpNotEq -> CsParens (CsBinop (CsOpNotEq, a, b))
+			| OpLt -> CsStaticCall (null_t, "lt", [a; b])
+			| OpGt -> CsStaticCall (null_t, "gt", [a; b])
+			| OpLte -> CsStaticCall (null_t, "lte", [a; b])
+			| _ -> CsStaticCall (null_t, "gte", [a; b])
+			end
 		| (OpGt | OpGte | OpLt | OpLte) when expr_produces_csharp_null_type ectx.gctx e1 && not (is_null_expr e2) && not (expr_produces_csharp_null_type ectx.gctx e2) ->
 			(* Null<T> op value → nullExpr.hasValue && (nullExpr.value op value) *)
 			let cs_e1 = cs_expr_of_texpr ectx e1 in
@@ -2497,7 +2542,16 @@ let rec cs_expr_of_texpr ectx e =
 			let expected_cs = cs_type_of_type ectx.gctx elem_type in
 			begin match storage_type with
 			| CsTypeMapping.ArrayObject | CsTypeMapping.ArrayDynamic ->
-				CsCast (expected_cs, unop_result)
+				(* The element is an object (a Null<Int>, a Dynamic number): C# has no ++
+				   on it. The runtime adds to the number it holds and stores the result. *)
+				let storage = CsCall (CsField (arr_cs, "__objectStorage"), []) in
+				let delta = CsConst (CsConstInt (if op = Increment then 1l else (-1l))) in
+				let result = CsStaticCall (runtime_type, "arrayIncrement", [storage; idx_cs; delta; CsConst (CsConstBool is_postfix)]) in
+				ignore unop_result;
+				begin match expected_cs with
+				| CsTypeObject | CsTypeDynamic -> result
+				| _ -> CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx result CsTypeObject expected_cs
+				end
 			| _ -> unop_result
 			end
 		| None ->
