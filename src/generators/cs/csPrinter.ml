@@ -310,11 +310,46 @@ and print_expr ctx = function
 	| CsNameOf s -> print ctx "nameof("; print ctx s; print ctx ")"
 	| CsSizeOf t -> print ctx "sizeof("; print_type ctx t; print ctx ")"
 	| CsBinop (op, e1, e2) ->
-		print_expr ctx e1;
+		(* An operand that binds less than this operator is printed in parentheses: the
+		   tree says how the expression is grouped, whatever built it *)
+		let prec = function
+			| CsOpMul | CsOpDiv | CsOpMod -> 12
+			| CsOpAdd | CsOpSub -> 11
+			| CsOpShl | CsOpShr -> 10
+			| CsOpLt | CsOpLte | CsOpGt | CsOpGte -> 9
+			| CsOpEq | CsOpNotEq -> 8
+			| CsOpAnd -> 7
+			| CsOpXor -> 6
+			| CsOpOr -> 5
+			| CsOpBoolAnd -> 4
+			| CsOpBoolOr -> 3
+			| CsOpNullCoalesce -> 2
+			| CsOpAssign | CsOpAssignOp _ -> 1
+		in
+		let p = prec op in
+		let right_assoc = p <= 2 in
+		let needs_parens is_left e = match e with
+			| CsBinop (child, _, _) ->
+				let c = prec child in
+				if p = 1 then is_left && c = 1
+				else if is_left then (if right_assoc then c <= p else c < p)
+				else (if right_assoc then c < p else c <= p)
+			| CsTernary _ | CsLambda _ -> p > 1 || is_left
+			| _ -> false
+		in
+		let operand is_left e =
+			if needs_parens is_left e then begin
+				print ctx "(";
+				print_expr ctx e;
+				print ctx ")"
+			end else
+				print_expr ctx e
+		in
+		operand true e1;
 		print ctx " ";
 		print ctx (binop_to_string op);
 		print ctx " ";
-		print_expr ctx e2
+		operand false e2
 	| CsUnop (op, is_postfix, e) ->
 		(* Prefix unary operators need parens around binary ops and ternary to preserve precedence.
 		   E.g., !(a != b) should be "!(a != b)" not "!a != b" *)

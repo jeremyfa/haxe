@@ -58,6 +58,7 @@ class Main {
 		test("null check of a Null value typed by an abstract", testNullCheckOfAbstract);
 		test("null given to a local Null of an abstract over a number", testNullLocalOfAbstract);
 		test("arrays of an abstract over a number", testArrayOfAbstract);
+		test("comparison of a Null number next to another condition", testNullComparisonGrouping);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -468,6 +469,24 @@ class Main {
 		t(halves.join(",") == "0.5,1" && cs.Syntax.code("{0}.__floatArray != null", halves));
 		var names = ids.map(id -> "n" + id.toInt());
 		t(names.join(",") == "n7,n8");
+	}
+
+	static function testNullComparisonGrouping() {
+		// The comparison is several C# conditions: they stay one operand of what is around
+		var holder = new WithNullIndex();
+		var other:Null<String> = Sys.args().length > 100 ? "x" : null;
+		var ix = 2;
+		t(!(holder.index != ix && other != null));
+		t(!(other != null && holder.index != ix));
+		t(holder.index != ix || other != null);
+		holder.index = 2;
+		t(holder.index == ix && other == null);
+		t(!(holder.index != ix && other == null));
+		var a:Null<Int> = null;
+		var b:Null<Int> = 3;
+		t(!(a >= b && other == null) && !(a == b && other == null) && (a != b && other == null));
+		// arithmetic regrouped by inlining
+		t(Grouping.scale(1 + ix, 2) == 6 && Grouping.minus(10, ix - 1) == 9);
 	}
 
 	static function testNativeBase() {
@@ -1758,4 +1777,26 @@ abstract Ratio(Float) {
 
 	public inline function toFloat():Float
 		return this;
+}
+
+class WithNullIndex {
+	public var index(get, set):Null<Int>;
+
+	var stored:Null<Int> = null;
+
+	public function new() {}
+
+	function get_index():Null<Int>
+		return stored;
+
+	function set_index(v:Null<Int>):Null<Int>
+		return stored = v;
+}
+
+class Grouping {
+	public static inline function scale(a:Int, b:Int):Int
+		return a * b;
+
+	public static inline function minus(a:Int, b:Int):Int
+		return a - b;
 }
