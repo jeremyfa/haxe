@@ -1299,5 +1299,12 @@ let generate_csproj proj =
 		) proj.proj_references;
 		Buffer.add_string b "  </ItemGroup>\n";
 	end;
+	if proj.proj_resources <> [] then begin
+		Buffer.add_string b "  <ItemGroup>\n";
+		List.iter (fun file ->
+			Buffer.add_string b (Printf.sprintf "    <EmbeddedResource Include=\"Resources/%s\" LogicalName=\"%s\" />\n" file file)
+		) proj.proj_resources;
+		Buffer.add_string b "  </ItemGroup>\n"
+	end;
 	Buffer.add_string b "</Project>\n";
 	Buffer.contents b

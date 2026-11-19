@@ -74,6 +74,12 @@
 		"platforms": ["cs"]
 	},
 	{
+		"name": "CsResourceFiles",
+		"define": "cs.resource-files",
+		"doc": "Write the resources given with --resource as files (Resources/ in the output folder, embedded in the assembly by the generated project) instead of putting them in the generated code. See cs.ResourceFiles.",
+		"platforms": ["cs"]
+	},
+	{
 		"name": "CsNetTarget",
 		"define": "cs.net-target",
 		"doc": "Set the .NET library target name for loading C# extern API definitions. (default: netstandard)",

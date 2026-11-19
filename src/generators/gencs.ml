@@ -4374,14 +4374,18 @@ let rec cs_expr_of_texpr ectx e =
 	| TCall ({ eexpr = TIdent "__resources__" }, []) ->
 		(* Generate __resources__ builtin - array of {name, data, str} HaxeDynamicObjects *)
 		let resources = Hashtbl.fold (fun name data acc -> (name, data) :: acc) ectx.gctx.com.resources [] in
+		let resources = List.sort (fun (a, _) (b, _) -> compare a b) resources in
+		(* With -D cs.resource-files the content is in a file (see generate): only the name
+		   is in the code, and haxe.Resource reads the file through cs.ResourceFiles. *)
+		let as_files = Common.defined ectx.gctx.com DefineList.CsResourceFiles in
 		if List.length resources = 0 then
 			CsRaw "global::haxe.root.Array.__ofDynLiteral(new object[0])"
 		else
 			let items = List.map (fun (name, data) ->
-				let encoded = Codegen.bytes_serialize data in
+				let data_cs = if as_files then "null" else Printf.sprintf "%S" (Codegen.bytes_serialize data) in
 				(* HaxeDynamicObject._hx_create takes Array of alternating keys/values *)
-				Printf.sprintf "global::haxe.lang.HaxeDynamicObject._hx_create(global::haxe.root.Array.__ofDynLiteral(new object[] { \"name\", %S, \"data\", %S, \"str\", null }))"
-					name encoded
+				Printf.sprintf "global::haxe.lang.HaxeDynamicObject._hx_create(global::haxe.root.Array.__ofDynLiteral(new object[] { \"name\", %S, \"data\", %s, \"str\", null }))"
+					name data_cs
 			) resources in
 			CsRaw (Printf.sprintf "global::haxe.root.Array.__ofDynLiteral(new object[] { %s })" (String.concat ", " items))
 	| TCall ({ eexpr = TConst TSuper }, _) ->
@@ -11085,11 +11089,34 @@ public static class HaxeReflectionInit
 			Some (Filename.remove_extension (Filename.basename path), path)
 		end
 	) com.native_libs.net_libs) in
+	(* -D cs.resource-files: one file per resource in Resources/, named like on the other
+	   targets that write resources as files. The generated project embeds them in the
+	   assembly under that name. *)
+	let resource_files =
+		if not (Common.defined com DefineList.CsResourceFiles) then []
+		else begin
+			let names = Hashtbl.fold (fun name data acc ->
+				let file = Codegen.escape_res_name name false in
+				write_file com.file ("Resources/" ^ file) data;
+				file :: acc
+			) com.resources [] in
+			(* The folder only holds the resources of this build: remove the files of
+			   resources that are not given anymore *)
+			let dir = com.file ^ "/Resources" in
+			if Sys.file_exists dir && Sys.is_directory dir then
+				Array.iter (fun file ->
+					let path = dir ^ "/" ^ file in
+					if not (List.mem file names) && not (Sys.is_directory path) then Sys.remove path
+				) (Sys.readdir dir);
+			List.sort compare names
+		end
+	in
 	let proj = {
 		proj_name = "HaxeProject";
 		proj_target_framework = target_framework;
 		proj_output_type = if is_library then "Library" else "Exe";
 		proj_references = references;
+		proj_resources = resource_files;
 	} in
 	write_file com.file "Project.csproj" (generate_csproj proj);
 

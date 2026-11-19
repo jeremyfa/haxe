@@ -358,4 +358,5 @@ type cs_project = {
 	proj_target_framework : string;
 	proj_output_type : string;  (* Exe, Library *)
 	proj_references : (string * string) list;  (* assembly name, path of the .dll *)
+	proj_resources : string list;  (* files of Resources/ to embed in the assembly *)
 }
