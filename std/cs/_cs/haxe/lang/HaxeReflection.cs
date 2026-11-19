@@ -18,7 +18,7 @@ namespace haxe.lang
         // Lazy init callback: dispatches to per-class _hx_bind(). It refers to the generated
         // HaxeReflectionInit by itself, so that reflection works whoever runs the Haxe code:
         // Program.Main, or a host that calls static methods directly (Unity for example).
-        internal static Action<string> initCallback = global::HaxeReflectionInit.initType;
+        internal static Action<string> initCallback = global::haxe.lang.HaxeReflectionInit.initType;
 
         /// <summary>
         /// Called from _hx_bind() methods of generated classes.

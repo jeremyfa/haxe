@@ -303,6 +303,10 @@ let cs_path_of_path (pack, name) =
 		| [] when Hashtbl.mem net_lib_types (pack, name) -> []  (* .NET type without namespace *)
 		| [] when Hashtbl.mem global_extern_types (pack, name) -> []  (* extern of the global namespace *)
 		| [] -> ["haxe"; "root"]  (* Default namespace for unpackaged types *)
+		| [p] when String.length p > 1 && p.[0] = '_' ->
+			(* Private types of an unpackaged module (_Reflect.MethodClosure): with the
+			   types of that module, not in the global namespace *)
+			["haxe"; "root"; p]
 		| _ -> pack
 	in
 	(List.map escape_identifier pack, escape_identifier name)

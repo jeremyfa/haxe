@@ -1354,15 +1354,23 @@ let print_file ctx file =
 		newline ctx;
 		print ctx "}"
 	end;
-	(* Print top-level types (like closures) outside the namespace *)
+	(* The closure classes of the file, after its type. They have a namespace of
+	   their own: nothing the generator writes is in the global namespace, where it
+	   would meet the code of whoever uses the output as a library. *)
 	if file.file_top_level_types <> [] then begin
 		newline ctx;
+		newline ctx;
+		print ctx "namespace haxe.generated";
+		newline ctx;
+		print ctx "{";
 		newline ctx;
 		List.iter (fun td ->
 			print_type_def ctx td;
 			newline ctx;
 			newline ctx
-		) file.file_top_level_types
+		) file.file_top_level_types;
+		print ctx "}";
+		newline ctx
 	end
 
 (* Generate C# source from file *)
