@@ -221,6 +221,11 @@ let make_array_from_native storage_type native_array_expr _target_cs_type =
    when it is empty (a type without namespace is not in haxe.root). *)
 let net_lib_types : (Globals.path, unit) Hashtbl.t = Hashtbl.create 0
 
+(* Extern types declared by hand in the root package (no package, no @:native with a
+   namespace): they describe C# types of the global namespace, written in C# next to the
+   generated code (scripts of a Unity project for example). Set by Gencs.generate. *)
+let global_extern_types : (Globals.path, unit) Hashtbl.t = Hashtbl.create 0
+
 let is_cs_native_generic_class path =
 	match path with
 	| _ when Hashtbl.mem net_lib_types path -> true
@@ -295,6 +300,7 @@ let get_unboxed_type = function
 let cs_path_of_path (pack, name) =
 	let pack = match pack with
 		| [] when Hashtbl.mem net_lib_types (pack, name) -> []  (* .NET type without namespace *)
+		| [] when Hashtbl.mem global_extern_types (pack, name) -> []  (* extern of the global namespace *)
 		| [] -> ["haxe"; "root"]  (* Default namespace for unpackaged types *)
 		| _ -> pack
 	in

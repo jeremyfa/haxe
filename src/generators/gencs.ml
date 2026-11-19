@@ -8563,10 +8563,12 @@ let generate_constructor gctx c cf field_init_stmts =
 		   CS0114: If parent is also two-phase and has same signature, we need 'new virtual' to avoid hiding warning. *)
 		let current_ctor_types = List.map (fun (_, _, t) -> cs_type_of_type gctx t) args in
 		let hides_parent_hx_new = parent_is_two_phase && base_ctor_types = current_ctor_types in
+		(* A final class is sealed in C#, where a new virtual member is an error (CS0549) *)
+		let virtual_modifiers = if has_class_flag c CFinal then [] else [MemberModifier.Virtual] in
 		let hx_new_modifiers = if hides_parent_hx_new then
-			[MemberModifier.New; MemberModifier.Virtual]
+			MemberModifier.New :: virtual_modifiers
 		else
-			[MemberModifier.Virtual]
+			virtual_modifiers
 		in
 		let hx_new_method = CsMemberMethod {
 			m_name = "_hx_new";
@@ -10781,6 +10783,14 @@ let generate com =
 	List.iter (function
 		| TClassDecl c when Meta.has Meta.LibType c.cl_meta -> Hashtbl.replace CsTypeMapping.net_lib_types c.cl_path ()
 		| TEnumDecl e when Meta.has Meta.LibType e.e_meta -> Hashtbl.replace CsTypeMapping.net_lib_types e.e_path ()
+		| _ -> ()
+	) com.types;
+	(* Haxe types of the root package go to the haxe.root namespace. An extern of the
+	   root package is not a Haxe type: it is a C# type of the global namespace. *)
+	Hashtbl.reset CsTypeMapping.global_extern_types;
+	List.iter (function
+		| TClassDecl ({ cl_path = ([], _) } as c) when has_class_flag c CExtern -> Hashtbl.replace CsTypeMapping.global_extern_types c.cl_path ()
+		| TEnumDecl ({ e_path = ([], _) } as e) when e.e_extern -> Hashtbl.replace CsTypeMapping.global_extern_types e.e_path ()
 		| _ -> ()
 	) com.types;
 
