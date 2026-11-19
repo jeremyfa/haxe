@@ -946,6 +946,14 @@ let get_rest_element_type t =
 	| TAbstract ({ a_path = (["haxe"], "Rest") }, [elem_type]) -> Some elem_type
 	| _ -> None
 
+(* The index of an array access on a Dynamic value (cs.Cs.arrayGet / arraySet take an
+   int): an index that is itself Dynamic is an object in C#, and is converted. *)
+let dynamic_array_index ectx cs_expr_of_texpr idx =
+	let idx_cs = cs_expr_of_texpr ectx idx in
+	match cs_type_of_type ectx.gctx idx.etype with
+	| CsTypeObject | CsTypeDynamic -> CsStaticCall (runtime_type, "toInt", [idx_cs])
+	| _ -> idx_cs
+
 (* ====== Call argument generation ====== *)
 
 (* Generate a single argument with coercion based on expected type.
@@ -1003,8 +1011,10 @@ let generate_single_arg ectx cs_expr_of_texpr arg expected_type =
 			(* Check if original var type differs from expected and requires cast *)
 			begin match var_cs_type, expected_cs_type with
 			| CsTypeClass (path1, params1), CsTypeClass (path2, params2)
-				when path1 = path2 && params1 <> params2 ->
-				(* Check if all type params in expected are in scope.
+				when path1 = path2 && params1 <> params2 && path1 <> (["haxe"; "lang"], "Null") ->
+				(* (Null<int> to Null<double> is not a cast: it is a conversion of the value,
+				   done by the general coercion below.)
+				   Check if all type params in expected are in scope.
 				   If so, we can safely cast because the types are valid at this point. *)
 				let rec all_type_params_in_scope scope cs_type = match cs_type with
 					| CsTypeGenericParam name -> List.mem name scope
@@ -1499,7 +1509,7 @@ let rec cs_expr_of_texpr ectx e =
 				CsStaticCall (runtime_type, "getField", [cs_expr_of_texpr ectx e1; string_expr])
 			else
 				(* Int/numeric index: use runtime helper cs.Cs.arrayGet *)
-				CsStaticCall (CsTypeClass ((["cs"], "Cs"), []), "arrayGet", [cs_expr_of_texpr ectx e1; cs_expr_of_texpr ectx e2])
+				CsStaticCall (CsTypeClass ((["cs"], "Cs"), []), "arrayGet", [cs_expr_of_texpr ectx e1; dynamic_array_index ectx cs_expr_of_texpr e2])
 			in
 			(* Cast result to expected type if it's not Dynamic.
 			   Use Runtime.toXxx for primitives to handle boxed type mismatches. *)
@@ -1619,7 +1629,7 @@ let rec cs_expr_of_texpr ectx e =
 			begin match e1.eexpr with
 			| TArray (arr, idx) ->
 				let arr_cs = cs_expr_of_texpr ectx arr in
-				let idx_cs = cs_expr_of_texpr ectx idx in
+				let idx_cs = dynamic_array_index ectx cs_expr_of_texpr idx in
 				let val_cs = cs_expr_of_texpr ectx e2 in
 				CsStaticCall (CsTypeClass ((["cs"], "Cs"), []), "arraySet", [arr_cs; idx_cs; val_cs])
 			| _ -> CsBinop (cs_binop_of_binop op, cs_expr_of_texpr ectx e1, cs_expr_of_texpr ectx e2)
@@ -1812,6 +1822,21 @@ let rec cs_expr_of_texpr ectx e =
 		   When both are Null<T>, check both have values before comparing.
 		   This prevents the implicit conversion to T (which uses default value 0/0.0)
 		   from producing wrong results for null comparisons. *)
+		| (OpGt | OpGte | OpLt | OpLte) when
+			(let rec is_incdec e = match e.eexpr with
+				| TUnop ((Ast.Increment | Ast.Decrement), _, _) -> true
+				| TParenthesis e | TMeta (_, e) -> is_incdec e
+				| _ -> false
+			in
+			(is_incdec e1 && expr_produces_csharp_null_type ectx.gctx e1) || (is_incdec e2 && expr_produces_csharp_null_type ectx.gctx e2)) ->
+			(* `--count <= 0` with a Null<Int>: the operand changes the variable, so it is
+			   written once (the cases below repeat it to test hasValue), and what it is
+			   compared with is its value. *)
+			let value e =
+				let cs = cs_expr_of_texpr ectx e in
+				if expr_produces_csharp_null_type ectx.gctx e then CsField (CsParens cs, "value") else cs
+			in
+			CsBinop (cs_binop_of_binop op, value e1, value e2)
 		| (OpGt | OpGte | OpLt | OpLte) when expr_produces_csharp_null_type ectx.gctx e1 && not (is_null_expr e2) && not (expr_produces_csharp_null_type ectx.gctx e2) ->
 			(* Null<T> op value → nullExpr.hasValue && (nullExpr.value op value) *)
 			let cs_e1 = cs_expr_of_texpr ectx e1 in
@@ -2068,7 +2093,7 @@ let rec cs_expr_of_texpr ectx e =
 					| Some helper_name ->
 						(* These helpers return object, but the expression may have a specific type. *)
 						let call_expr = CsStaticCall (CsTypeClass (cs_path, []), helper_name,
-							[cs_expr_of_texpr ectx arr_expr; cs_expr_of_texpr ectx idx_expr; cs_expr_of_texpr ectx e2]) in
+							[cs_expr_of_texpr ectx arr_expr; dynamic_array_index ectx cs_expr_of_texpr idx_expr; cs_expr_of_texpr ectx e2]) in
 						let expected_cs_type = cs_type_of_type ectx.gctx e.etype in
 						cast_object_to_type expected_cs_type call_expr
 					| None ->
@@ -2091,6 +2116,12 @@ let rec cs_expr_of_texpr ectx e =
 						let e1_cs = cs_expr_of_texpr ectx e1 in
 						let e2_cs = cs_expr_of_texpr ectx e2 in
 						let op_result = CsStaticCall (CsTypeClass (cs_path, []), helper, [e1_cs; e2_cs]) in
+						(* The helper returns object: convert it when what is assigned has a
+						   type (a Float field multiplied by a Dynamic value) *)
+						let op_result = match cs_type_of_type ectx.gctx e1.etype with
+							| CsTypeObject | CsTypeDynamic -> op_result
+							| target -> cast_object_to_type target op_result
+						in
 						CsBinop (CsOpAssign, e1_cs, op_result)
 				| `None ->
 					(* Check if e1 is a Haxe Array element access with object storage that needs a cast.
@@ -3132,7 +3163,12 @@ let rec cs_expr_of_texpr ectx e =
 			let func_expr = CsField (obj, get_native_field_name cf) in
 			(* If the field's declared type is an erased type param, the field returns object in C#.
 			   But we need to call __hx_invoke on it, so cast to haxe.lang.Function. *)
-			let func_expr = if is_erased_type_param cf.cf_type then
+			(* A field typed Dynamic that holds a function is an object in C# as well. *)
+			let field_is_object = match cs_type_of_type ectx.gctx actual_field_type with
+				| CsTypeObject | CsTypeDynamic -> true
+				| _ -> false
+			in
+			let func_expr = if is_erased_type_param cf.cf_type || field_is_object then
 				CsCast (function_type, func_expr)
 			else func_expr in
 			(* Get parameter and return types for typed invoke.
@@ -4286,7 +4322,7 @@ let rec cs_expr_of_texpr ectx e =
 						let var_cs_type = cs_type_of_type ectx.gctx v.v_type in
 						begin match var_cs_type, expected_cs_type with
 						| CsTypeClass (path1, params1), CsTypeClass (path2, params2)
-							when path1 = path2 && params1 <> params2 ->
+							when path1 = path2 && params1 <> params2 && path1 <> (["haxe"; "lang"], "Null") ->
 							let is_type_param = function CsTypeGenericParam _ -> true | _ -> false in
 							let original_has_in_scope_type_params = List.exists (fun p ->
 								match p with

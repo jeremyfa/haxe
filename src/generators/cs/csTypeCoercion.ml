@@ -520,15 +520,7 @@ let coerce_null_to_null ~fresh_temp cs_arg arg_type expected_type =
 	match get_cs_null_inner arg_type, get_cs_null_inner expected_type with
 	| Some inner_arg, Some inner_expected when inner_arg <> inner_expected ->
 		(* Check if numeric conversion needed *)
-		let needs_numeric = match inner_expected, inner_arg with
-			| CsTypeDouble, CsTypeInt -> true
-			| CsTypeDouble, CsTypeFloat -> true
-			| CsTypeFloat, CsTypeInt -> true
-			| CsTypeLong, CsTypeInt -> true
-			| CsTypeInt, CsTypeLong -> true
-			| CsTypeInt, CsTypeDouble -> true
-			| _ -> false
-		in
+		let needs_numeric = is_cs_number_type inner_expected && is_cs_number_type inner_arg in
 		(* Check if generic coercion needed *)
 		let needs_generic = match inner_expected, inner_arg with
 			| CsTypeClass (path1, params1), CsTypeClass (path2, params2)
