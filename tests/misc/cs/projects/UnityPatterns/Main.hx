@@ -39,6 +39,11 @@ class Main {
 	@:keep public static function run():Int {
 		test("reflection without Program.Main", testReflectionWithoutMain);
 		test("@:classCode", testClassCode);
+		test("inline C# with braces", testInlineCodeBraces);
+		test("extern class of the root package", testRootExtern);
+		test("final class with statements before super()", testFinalTwoPhase);
+		test("methods with many arguments", testManyArguments);
+		test("statements before super()", testStatementsBeforeSuper);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -110,6 +115,63 @@ class Main {
 		var items:Array<Int> = [];
 		NativeMembers.collect(items);
 		t(items.join(",") == "1,2,3");
+	}
+
+	static function testInlineCodeBraces() {
+		// Braces that are not placeholders are plain C#
+		untyped __cs__('byte[] pair = {7, 9}');
+		var sum:Int = untyped __cs__('pair[0] + pair[1]');
+		t(sum == 16);
+		var three:Int = cs.Syntax.code("new int[] {1,2,3}.Length");
+		t(three == 3);
+		var viaLambda:Int = cs.Syntax.code("((global::System.Func<int, int>)(v => {return v + {0};}))(40)", 2);
+		t(viaLambda == 42);
+	}
+
+	static function testRootExtern() {
+		// HostHelper is written in C#, in the global namespace (host/HostHelper.cs)
+		t(HostHelper.twice(4) == 8);
+		var helper = new HostHelper();
+		helper.next();
+		t(helper.next() == 2 && helper.calls == 2);
+		var list:Array<HostHelper> = [helper];
+		t(list[0].calls == 2);
+		var mode = HostMode.On;
+		t(mode != HostMode.Off);
+		var keeper = new KeepsHelper(helper);
+		t(keeper.helper.calls == 2);
+	}
+
+	static function testFinalTwoPhase() {
+		var s = new SealedNode(21);
+		t(s.doubled == 42 && s.name() == "base");
+	}
+
+	static function testManyArguments() {
+		// More arguments than the typed closures of the runtime take
+		var many = new ManyArgs();
+		t(many.sum(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, "x") == "66.5x");
+		var f = many.sum;
+		t(f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0.5, "y") == "55.5y");
+		var viaReflect:String = Reflect.callMethod(many, Reflect.field(many, "sum"), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.5, "z"]);
+		t(viaReflect == "10.5z");
+		var g = ManyArgs.count;
+		g(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, true);
+		t(ManyArgs.total == 55);
+		Reflect.callMethod(ManyArgs, Reflect.field(ManyArgs, "count"), [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, false]);
+		t(ManyArgs.total == 54);
+	}
+
+	static function testStatementsBeforeSuper() {
+		// The argument of super() is computed by statements before it, among which an
+		// inlined call that declares locals named like the arguments of the constructor
+		var tex = new RenderTex(10, 20);
+		t(tex.item == "20x40 d1" && tex.density == 2 && tex.depth && tex.antialiasing == 0 && tex.flag);
+		var other = new RenderTex(10, 20, 1, false, 4);
+		t(other.item == "10x20 4" && other.density == 1 && !other.depth && other.antialiasing == 4);
+		t(RenderTex.maker.count == 2);
+		var sub = new SubRenderTex(3);
+		t(sub.item == "6x6 d1" && sub.extra == 3 && sub.flag);
 	}
 
 	static function testNativeBase() {
@@ -286,6 +348,11 @@ class Main {
 		var p = new Particles<FastEmitter>(new FastEmitter());
 		t(p.go() == 7);
 		t(p.emitter.speed == 2);
+		// an inline method of the constraint: its `this` becomes a local typed by the type parameter
+		p.range(3);
+		t(p.emitter.speed == 3 && p.emitter.maxSpeed == 3);
+		p.range(4, 9);
+		t(p.emitter.speed == 4 && p.emitter.maxSpeed == 9);
 	}
 
 	static function testArrayVariance() {
@@ -788,6 +855,108 @@ class Lifecycle extends cs.system.EventArgs {
 	}
 }
 
+extern class HostHelper {
+	var calls:Int;
+	function new();
+	static function twice(value:Int):Int;
+	function next():Int;
+}
+
+extern enum HostMode {
+	Off;
+	On;
+}
+
+class KeepsHelper {
+	public var helper:HostHelper;
+
+	public function new(helper:HostHelper) {
+		this.helper = helper;
+	}
+}
+
+final class SealedNode extends BaseNode {
+	public var doubled:Int;
+
+	public function new(value:Int) {
+		var computed = value * 2;
+		super();
+		doubled = computed;
+	}
+}
+
+@:keep class ManyArgs {
+	public static var total = 0;
+
+	public function new() {}
+
+	public function sum(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int, g:Int, h:Int, i:Int, j:Int, k:Float, s:String):String {
+		return (a + b + c + d + e + f + g + h + i + j + k) + s;
+	}
+
+	public static function count(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int, g:Int, h:Int, i:Int, j:Int, add:Bool):Void {
+		var n = a + b + c + d + e + f + g + h + i + j;
+		total += add ? n : -n;
+	}
+}
+
+class TexBase {
+	public var item:String;
+	public var density:Float;
+
+	public function new(item:String, density:Float) {
+		this.item = item;
+		this.density = density;
+	}
+}
+
+class TexMaker {
+	public var count = 0;
+
+	public function new() {}
+
+	inline public function make(width:Int, height:Int, depth:Bool, antialiasing:Int):String {
+		if (antialiasing < 1)
+			antialiasing = 1;
+		var r:String = null;
+		untyped __cs__('var native = new global::System.Text.StringBuilder().Append({0}).Append("x").Append({1})', width, height);
+		if (depth)
+			r = untyped __cs__('native.ToString()') + " d" + antialiasing;
+		else
+			r = untyped __cs__('native.ToString()') + " " + antialiasing;
+		count++;
+		return r;
+	}
+}
+
+class RenderTex extends TexBase {
+	public static var maker = new TexMaker();
+
+	public var depth:Bool;
+	public var antialiasing:Int;
+	public var flag = false;
+
+	public function new(width:Float, height:Float, density:Float = -1, depth:Bool = true, antialiasing:Int = 0) {
+		if (density == -1)
+			density = 2;
+		this.depth = depth;
+		this.antialiasing = antialiasing;
+		var backendItem = maker.make(Math.round(width * density), Math.round(height * density), depth, antialiasing);
+		super(backendItem, density);
+		flag = true;
+	}
+}
+
+class SubRenderTex extends RenderTex {
+	public var extra:Int;
+
+	public function new(size:Int) {
+		var doubled = size * 2;
+		super(size, size, doubled / size);
+		extra = size;
+	}
+}
+
 class Emitter {
 	public var speed:Float = 1;
 
@@ -795,6 +964,17 @@ class Emitter {
 
 	public function emit():Int {
 		return 3;
+	}
+
+	public var maxSpeed:Float = 1;
+
+	inline public function speedRange(min:Float, ?max:Float):Void {
+		this.speed = min;
+		if (max == null) {
+			this.maxSpeed = min;
+		} else {
+			this.maxSpeed = max;
+		}
 	}
 }
 
@@ -814,6 +994,10 @@ class Particles<T:Emitter> {
 	public function go():Float {
 		emitter.speed = 2;
 		return emitter.emit() + emitter.speed;
+	}
+
+	inline public function range(min:Float, ?max:Float):Void {
+		emitter.speedRange(min, max);
 	}
 }
 

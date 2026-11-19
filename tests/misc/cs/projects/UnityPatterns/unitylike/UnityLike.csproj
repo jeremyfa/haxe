@@ -12,4 +12,8 @@
     <DefineConstants>NET_STANDARD;NET_STANDARD_2_0;NET_STANDARD_2_1</DefineConstants>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- C# written by hand, declared as externs on the Haxe side -->
+    <Compile Include="../host/HostHelper.cs" />
+  </ItemGroup>
 </Project>

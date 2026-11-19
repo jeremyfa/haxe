@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Host.cs" />
+    <Compile Include="HostHelper.cs" />
     <!-- The resource files, embedded like the generated project does -->
     <EmbeddedResource Include="../bin/Resources/*" LogicalName="%(Filename)%(Extension)" />
   </ItemGroup>
