@@ -5277,6 +5277,10 @@ let rec cs_expr_of_texpr ectx e =
 						| _ -> false
 						end
 					| CsField (_, "value") -> false  (* .value unwraps Null, so result is not Null *)
+					(* What a call of a function value returns, read as the Null<T> it is: wrapped
+					   again, a call that returned no value would become the value 0 *)
+					| CsCall (CsField (_, ("toNullInt" | "toNullDouble" | "toNullFloat" | "toNullBool" | "toNullLong")), []) -> true
+					| CsStaticCall (CsTypeClass ((["haxe"; "lang"], "Null"), _), "_ofDynamic", _) -> true
 					| CsTernary (_, then_e, else_e) ->
 						(* Ternary produces Null if BOTH branches produce Null *)
 						cs_expr_produces_null_type then_e && cs_expr_produces_null_type else_e
@@ -5310,6 +5314,11 @@ let rec cs_expr_of_texpr ectx e =
 					| TConst TNull ->
 						(* Null constant generates CsDefault, which is already recognized *)
 						true
+					| TCall _ ->
+						(* A call that returns a Null<T> in C# *)
+						(match expr with
+						| CsCall _ | CsStaticCall _ -> expr_produces_csharp_null_type ectx.gctx e
+						| _ -> false)
 					| _ -> false
 				in
 				let expr_is_null_type = cs_expr_produces_null_type expr in

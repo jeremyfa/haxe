@@ -64,6 +64,7 @@ class Main {
 		test("Null value given to generic code", testNullValueInGenericCode);
 		test("Int given to a Dynamic argument through a function value", testIntThroughFunctionValue);
 		test("statements made from values", testStatementsFromValues);
+		test("function value returning a Null number, in a ternary", testNullReturnInTernary);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -644,6 +645,23 @@ class Main {
 
 	static inline function rounded(v:Float):Float
 		return cs.Syntax.code("((double)(float)({0}))", v);
+
+	static function testNullReturnInTernary() {
+		// What the call returns is the Null<T>: no value stays no value, not 0
+		var some:Null<KeyResolver> = new KeyResolver();
+		var none:Null<KeyResolver> = Sys.args().length > 100 ? some : null;
+		var list = [some, none];
+		var keys:Array<Null<NodeId>> = [for (r in list) r != null ? r.resolver(0) : null];
+		t(keys[0] == null && keys[1] == null);
+		keys = [for (r in list) r != null ? r.resolver(4) : null];
+		t(keys[0] != null && keys[0] == new NodeId(4) && keys[1] == null);
+		var ints:Array<Null<Int>> = [for (r in list) r != null ? r.ints(0) : null];
+		t(ints[0] == null && ints[1] == null);
+		var methods:Array<Null<NodeId>> = [for (r in list) r != null ? r.key(0) : null];
+		t(methods[0] == null);
+		var one:Null<NodeId> = some != null ? some.resolver(0) : null;
+		t(one == null);
+	}
 
 	static function testNativeBase() {
 		// What Unity needs from a MonoBehaviour written in Haxe: it creates the object
@@ -1973,4 +1991,17 @@ class Holder<T> {
 
 	public function index(some:Bool):Null<Int>
 		return some ? 3 : null;
+}
+
+class KeyResolver {
+	public final resolver:(Int) -> Null<NodeId>;
+	public final ints:(Int) -> Null<Int>;
+
+	public function new() {
+		resolver = x -> x > 0 ? new NodeId(x) : null;
+		ints = x -> x > 0 ? x : null;
+	}
+
+	public function key(x:Int):Null<NodeId>
+		return x > 0 ? new NodeId(x) : null;
 }
