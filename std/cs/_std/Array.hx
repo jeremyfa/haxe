@@ -2028,8 +2028,10 @@ private enum abstract ArrayType(Int) {
 				// Object -> Int: cast each element
 				__initIntArray(length > 0 ? length - 1 : 0);
 				if (__objectArray != null) {
-					for (i in 0...length)
-						__intArray[i] = cast __objectArray[i];
+					for (i in 0...length) {
+						var value:Dynamic = __objectArray[i];
+						__intArray[i] = value == null ? 0 : value;
+					}
 				}
 				__objectArray = null;
 		}
@@ -2066,8 +2068,10 @@ private enum abstract ArrayType(Int) {
 				// Object -> Float: cast each element
 				__initFloatArray(length > 0 ? length - 1 : 0);
 				if (__objectArray != null) {
-					for (i in 0...length)
-						__floatArray[i] = cast __objectArray[i];
+					for (i in 0...length) {
+						var value:Dynamic = __objectArray[i];
+						__floatArray[i] = value == null ? 0.0 : value;
+					}
 				}
 				__objectArray = null;
 		}
@@ -2118,6 +2122,42 @@ private enum abstract ArrayType(Int) {
 	 */
 	private function __migrateToObject():Void {
 		__upgradeToObject();
+	}
+
+	// =========================================================================
+	// Storage for an element changed in place (a[i] += v, a[i]++)
+	// The generated code writes to the native array itself. The values are moved
+	// to that array first when the Haxe array stores them another way: a copy or
+	// a slice of an empty array, an array filled through Dynamic...
+	// =========================================================================
+
+	private function __intStorage():cs.NativeArray<Int> {
+		if (__arrayType != TInt || __intArray == null)
+			__migrateToInt();
+		return __intArray;
+	}
+
+	private function __floatStorage():cs.NativeArray<Float> {
+		if (__arrayType != TFloat || __floatArray == null)
+			__migrateToFloat();
+		return __floatArray;
+	}
+
+	private function __boolStorage():cs.NativeArray<Bool> {
+		if (__arrayType != TBool || __boolArray == null)
+			__migrateToBool();
+		return __boolArray;
+	}
+
+	private function __objectStorage():cs.NativeArray<Dynamic> {
+		if (__arrayType != TObject || __objectArray == null) {
+			if (__arrayType == Unknown)
+				__initObjectArray(length > 0 ? length - 1 : 0);
+			else
+				__upgradeToObject();
+			__arrayType = TObject;
+		}
+		return __objectArray;
 	}
 
 	// =========================================================================

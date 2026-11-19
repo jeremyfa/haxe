@@ -66,6 +66,14 @@ class Main {
 		test("statements made from values", testStatementsFromValues);
 		test("function value returning a Null number, in a ternary", testNullReturnInTernary);
 		test("closure called with an array of numbers as arguments", testCallMethodTypedArgs);
+		test("override of a generic method with an argument named like a C# keyword", testKeywordArgumentInOverride);
+		test("final fields of an interface", testInterfaceFinalFields);
+		test("toString with arguments", testToStringWithArguments);
+		test("class without a constructor, with initialized fields, parent with arguments", testInheritedConstructorWithFieldInits);
+		test("override of a method that returns a type parameter", testOverrideOfTypeParameterReturn);
+		test("Dynamic index of an array", testDynamicArrayIndex);
+		test("element changed in place in an array stored another way", testInPlaceOnOtherStorage);
+		test("object literals given to structures", testObjectLiteralsForStructures);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -678,6 +686,117 @@ class Main {
 		var mixed:Array<Dynamic> = [1.5, "x"];
 		t(Reflect.callMethod(null, (a:Float, s:String) -> s + a, mixed) == "x1.5");
 	}
+
+	static function testKeywordArgumentInOverride() {
+		var emitter = new QueueingEmitter();
+		emitter.fire("a");
+		emitter.paused = false;
+		emitter.fire("b");
+		t(emitter.queued.join(",") == "a" && emitter.fired.join(",") == "b");
+	}
+
+	static function testInterfaceFinalFields() {
+		// read through the interface, one of them with a more specific type in the class
+		var model:IPanelModel = new PanelModel();
+		t(model.name == "m" && model.layout.size() == 3 && model.count == 2);
+		t(new PanelModel().layout.extra() == 4 && Reflect.field(model, "name") == "m");
+	}
+
+	static function testToStringWithArguments() {
+		// all optional: still the toString of Std.string() and of a concatenation
+		var uri = new EncodedUri();
+		var any:Dynamic = uri;
+		t(uri.toString() == "encoded" && uri.toString(true) == "raw");
+		t(Std.string(uri) == "encoded" && "" + uri == "encoded" && Std.string(any) == "encoded");
+		// required: another method
+		t(new TokenStore().toString(5) == "t5");
+	}
+
+	static function testInheritedConstructorWithFieldInits() {
+		// The class is made with the arguments of the constructor it inherits
+		var command = new MultiCommand({id: "undo"});
+		command.add("a");
+		t(command.id == "undo" && command.count() == 1 && command.registered);
+		var child = new CountedChild(4);
+		var other = new CountedChild(4, "abc");
+		t(child.total == 5 && child.len() == 1 && other.total == 7);
+		var made:CountedBase = Type.createInstance(CountedChild, [1, "ab"]);
+		t(made.total == 3);
+	}
+
+	static function testOverrideOfTypeParameterReturn() {
+		// Called on the class that overrides it: C# returns an object, like the first declaration
+		var text = new TextOption();
+		var number = new NumberOption();
+		var base:ValueOption<String> = text;
+		t(textLength(text.validate(true)) == 2 && textLength(text.validate("abc")) == 3 && text.validate(1).length == 1);
+		t(number.validate(true) + 1 == 6 && number.pick(3) * 2 == 8 && textLength(base.validate(false)) == 5);
+	}
+
+	static function textLength(s:String):Int
+		return s.length;
+
+	static function testDynamicArrayIndex() {
+		var holder:Dynamic = {id: 2};
+		var texts = ["a", "b", "c"];
+		var ints = [1, 2, 3];
+		var bools = [true, false, true];
+		var any:Array<Dynamic> = [1, "x", null];
+		texts[holder.id] = "z";
+		ints[holder.id] = 9;
+		bools[holder.id] = false;
+		any[holder.id] = 4;
+		ints[holder.id] += 1;
+		ints[holder.id]++;
+		t(texts[holder.id] == "z" && ints[holder.id] == 11 && bools[holder.id] == false && any[holder.id] == 4);
+	}
+
+	static function testInPlaceOnOtherStorage() {
+		// a[i] op= v writes to the native array: the array may not have it yet
+		var empty:Array<Int> = [];
+		var a = empty.slice(0);
+		a.push(0);
+		a[0] |= 4;
+		var b = empty.copy();
+		b.push(1);
+		b[0] += 2;
+		b[0]++;
+		var c:Array<Int> = cast([] : Array<Dynamic>);
+		c.push(5);
+		c[0] -= 1;
+		var d = empty.filter(x -> true);
+		d.push(2);
+		d[0] ^= 3;
+		t(a[0] == 4 && b[0] == 4 && c[0] == 4 && d[0] == 1);
+		var floats:Array<Float> = ([] : Array<Float>).slice(0);
+		floats.push(1.5);
+		floats[0] *= 2;
+		t(floats[0] == 3.0);
+		var mixed:Array<Dynamic> = [1, 2];
+		var ints:Array<Int> = cast mixed;
+		ints[1] += 5;
+		t(ints.join(",") == "1,7");
+		var sized:Array<Int> = [];
+		sized.resize(2);
+		sized[1] += 3;
+		t(sized.join(",") == "0,3");
+	}
+
+	static function testObjectLiteralsForStructures() {
+		// a plain value for an optional field: boxed as it is
+		var size = 12.5;
+		var count = 3;
+		var options:FontOptions = {family: "f", size: size, count: count};
+		var copy:Dynamic = Reflect.copy(options);
+		t(options.size == 12.5 && options.count == 3 && copy.size == 12.5);
+		t(describeFont({family: "f", size: size}) == "f/12.5/null");
+		// cast to the structure with values that are not of its fields: still an object
+		t(describeFont(cast {family: 12, size: "big"}) == "12/big/null");
+		t(describeFont(cast {count: "two"}) == "null/null/two");
+	}
+
+	static function describeFont(o:FontOptions):String
+		return Std.string(Reflect.field(o, "family")) + "/" + Std.string(Reflect.field(o, "size")) + "/" + Std.string(Reflect.field(o, "count"));
 
 	static function testNativeBase() {
 		// What Unity needs from a MonoBehaviour written in Haxe: it creates the object
@@ -2020,4 +2139,145 @@ class KeyResolver {
 
 	public function key(x:Int):Null<NodeId>
 		return x > 0 ? new NodeId(x) : null;
+}
+
+class BaseEmitter<T> {
+	public var fired:Array<T> = [];
+
+	public function new() {}
+
+	public function fire(event:T):Void {
+		fired.push(event);
+	}
+}
+
+class QueueingEmitter extends BaseEmitter<String> {
+	public var paused = true;
+	public var queued:Array<String> = [];
+
+	// `event` is a C# keyword, and the argument is an object in the parent
+	override public function fire(event:String):Void {
+		if (paused)
+			queued.push(event);
+		else
+			super.fire(event);
+	}
+}
+
+interface IPanelLayout {
+	function size():Int;
+}
+
+interface IPanelModel {
+	final name:String;
+	final layout:IPanelLayout;
+	var count(default, null):Int;
+}
+
+class PanelLayout implements IPanelLayout {
+	public function new() {}
+
+	public function size():Int
+		return 3;
+
+	public function extra():Int
+		return 4;
+}
+
+class PanelModel implements IPanelModel {
+	public final name:String;
+	public final layout:PanelLayout;
+	public var count(default, null):Int = 2;
+
+	public function new() {
+		name = "m";
+		layout = new PanelLayout();
+	}
+}
+
+class EncodedUri {
+	public function new() {}
+
+	public function toString(skipEncoding:Bool = false):String
+		return skipEncoding ? "raw" : "encoded";
+}
+
+class TokenStore {
+	public function new() {}
+
+	public function toString(start:Int):String
+		return "t" + start;
+}
+
+abstract class BaseCommand {
+	public final id:String;
+	public var registered = false;
+
+	public function new(opts:{id:String}) {
+		this.id = opts.id;
+		register();
+	}
+
+	function register() {
+		registered = true;
+	}
+}
+
+class MultiCommand extends BaseCommand {
+	final implementations:Array<String> = [];
+
+	public function add(s:String)
+		implementations.push(s);
+
+	public function count()
+		return implementations.length;
+}
+
+class CountedBase {
+	public var total:Int;
+
+	public function new(a:Int, b:String = "x") {
+		total = a + b.length;
+	}
+}
+
+@:keep class CountedChild extends CountedBase {
+	var list:Array<Int> = [1];
+
+	public function len()
+		return list.length;
+}
+
+typedef FontOptions = {?family:String, ?size:Float, ?count:Int};
+
+class ValueOption<V> {
+	public var fallback:V;
+
+	public function new(fallback:V)
+		this.fallback = fallback;
+
+	public function validate(input:Any):V
+		return fallback;
+
+	public function pick(value:V):V
+		return value;
+}
+
+class TextOption extends ValueOption<String> {
+	public function new()
+		super("d");
+
+	override public function validate(input:Any):String
+		return input == true ? "on" : Std.string(input);
+}
+
+class NumberOption extends ValueOption<Int> {
+	public function new()
+		super(1);
+
+	override public function validate(input:Any):Int
+		return input == true ? 5 : 2;
+
+	override public function pick(value:Int):Int
+		return value + 1;
 }

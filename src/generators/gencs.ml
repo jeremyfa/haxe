@@ -956,6 +956,20 @@ let dynamic_array_index ectx cs_expr_of_texpr idx =
 	| CsTypeObject | CsTypeDynamic -> CsStaticCall (runtime_type, "toInt", [idx_cs])
 	| _ -> idx_cs
 
+(* Whether an expression is a Null<T> in C#, for a value about to be given as an object.
+   A local or a field is what its declaration says: its expression can be typed Null<T>
+   by what receives it (an optional field of a structure) while the C# value is a plain T. *)
+let rec is_null_struct_value gctx e =
+	let is_null_cs t = match cs_type_of_type gctx t with
+		| CsTypeClass ((["haxe"; "lang"], "Null"), _) -> true
+		| _ -> false
+	in
+	match e.eexpr with
+	| TParenthesis e1 | TMeta (_, e1) -> is_null_struct_value gctx e1
+	| TLocal v -> is_null_cs v.v_type && is_null_cs e.etype
+	| TField (_, (FInstance (_, _, cf) | FStatic (_, cf) | FAnon cf)) -> is_null_cs cf.cf_type && is_null_cs e.etype
+	| _ -> expr_produces_csharp_null_type gctx e
+
 (* The condition of an if or a loop as the bool C# wants: a Dynamic value is unboxed *)
 let bool_condition ectx cond cond_cs =
 	match cs_type_of_type ectx.gctx cond.etype with
@@ -1291,7 +1305,24 @@ let anon_literal_class gctx e fields =
 			| [] -> true
 			| ((name, _, _), _) :: rest -> not (List.exists (fun ((n, _, _), _) -> n = name) rest) && distinct rest
 		in
-		if distinct fields && List.for_all (fun ((name, _, _), _) -> CsAnon.find_field ac name <> None) fields then Some ac else None
+		(* A value that cannot be what the field holds (a String for an Int field, in a
+		   literal cast to the structure): the literal is an object with those values *)
+		let kind t =
+			let t = match t with CsTypeClass ((["haxe"; "lang"], "Null"), [inner]) -> inner | t -> t in
+			match t with
+			| CsTypeString -> 1
+			| CsTypeBool -> 2
+			| CsTypeInt | CsTypeDouble | CsTypeFloat | CsTypeLong | CsTypeUInt | CsTypeShort | CsTypeByte -> 3
+			| _ -> 0
+		in
+		let fits ((name, _, _), value) = match CsAnon.find_field ac name with
+			| None -> false
+			| Some af ->
+				let field_kind = kind af.af_type in
+				let value_kind = kind (cs_type_of_type gctx value.etype) in
+				field_kind = 0 || value_kind = 0 || field_kind = value_kind
+		in
+		if distinct fields && List.for_all fits fields then Some ac else None
 	| None -> None
 
 let anon_get ectx (ac, af) obj_expr target_type =
@@ -1553,7 +1584,7 @@ let rec cs_expr_of_texpr ectx e =
 				let arr_expr = cs_expr_of_texpr ectx e1 in
 				let arr_expr = if is_null_wrapper then CsField (arr_expr, "value") else arr_expr in
 				let storage_type = classify_array_element_type e1.etype in
-				let idx_expr = cs_expr_of_texpr ectx e2 in
+				let idx_expr = dynamic_array_index ectx cs_expr_of_texpr e2 in
 				match storage_type with
 				| ArrayInt ->
 					(* arr.__getInt(i) - bounds-checked access, returns 0 for out-of-bounds *)
@@ -1667,7 +1698,7 @@ let rec cs_expr_of_texpr ectx e =
 			| TArray (arr, idx) ->
 				let arr_cs = cs_expr_of_texpr ectx arr in
 				let arr_cs = if arr_needs_unwrap then CsField (arr_cs, "value") else arr_cs in
-				let idx_cs = cs_expr_of_texpr ectx idx in
+				let idx_cs = dynamic_array_index ectx cs_expr_of_texpr idx in
 				let val_cs = cs_expr_of_texpr ectx e2 in
 				(* Use typed setter methods that handle backing array initialization.
 				   Direct backing array access (arr.__intArray[i] = v) would fail with
@@ -2182,15 +2213,17 @@ let rec cs_expr_of_texpr ectx e =
 						   arr[i] += v  ->  arr.__backing[i] = arr.__backing[i] op v *)
 						let arr_cs = cs_expr_of_texpr ectx arr_expr in
 						let arr_cs = if is_null_wrapper arr_expr then CsField (arr_cs, "value") else arr_cs in
-						let idx_cs = cs_expr_of_texpr ectx idx_expr in
+						let idx_cs = dynamic_array_index ectx cs_expr_of_texpr idx_expr in
 						let e2_cs = cs_expr_of_texpr ectx e2 in
-						let backing_field, needs_cast = match storage with
-							| ArrayInt -> "__intArray", false
-							| ArrayFloat -> "__floatArray", false
-							| ArrayBool -> "__boolArray", false
-							| ArrayObject | ArrayDynamic -> "__objectArray", true
+						(* The native array, through the method that makes sure the values are
+						   stored in it (a slice of an empty Array<Int> has no int[] yet) *)
+						let backing_method, needs_cast = match storage with
+							| ArrayInt -> "__intStorage", false
+							| ArrayFloat -> "__floatStorage", false
+							| ArrayBool -> "__boolStorage", false
+							| ArrayObject | ArrayDynamic -> "__objectStorage", true
 						in
-						let array_access = CsArrayAccess (CsField (arr_cs, backing_field), idx_cs) in
+						let array_access = CsArrayAccess (CsCall (CsField (arr_cs, backing_method), []), idx_cs) in
 						if needs_cast then begin
 							let elem_cs_type = cs_type_of_type ectx.gctx e1.etype in
 							(* (T)(arr.__objectArray[i]) op v - use cast_object_to_type for proper unboxing *)
@@ -2428,14 +2461,14 @@ let rec cs_expr_of_texpr ectx e =
 		begin match is_haxe_array_element with
 		| Some (arr_expr, idx_expr, elem_type) ->
 			let arr_cs = cs_expr_of_texpr ectx arr_expr in
-			let idx_cs = cs_expr_of_texpr ectx idx_expr in
+			let idx_cs = dynamic_array_index ectx cs_expr_of_texpr idx_expr in
 			let storage_type = CsTypeMapping.classify_array_element_type arr_expr.etype in
 			let backing_access = match storage_type with
-				| CsTypeMapping.ArrayInt -> CsArrayAccess (CsField (arr_cs, "__intArray"), idx_cs)
-				| CsTypeMapping.ArrayFloat -> CsArrayAccess (CsField (arr_cs, "__floatArray"), idx_cs)
-				| CsTypeMapping.ArrayBool -> CsArrayAccess (CsField (arr_cs, "__boolArray"), idx_cs)
+				| CsTypeMapping.ArrayInt -> CsArrayAccess (CsCall (CsField (arr_cs, "__intStorage"), []), idx_cs)
+				| CsTypeMapping.ArrayFloat -> CsArrayAccess (CsCall (CsField (arr_cs, "__floatStorage"), []), idx_cs)
+				| CsTypeMapping.ArrayBool -> CsArrayAccess (CsCall (CsField (arr_cs, "__boolStorage"), []), idx_cs)
 				| CsTypeMapping.ArrayObject | CsTypeMapping.ArrayDynamic ->
-					CsArrayAccess (CsField (arr_cs, "__objectArray"), idx_cs)
+					CsArrayAccess (CsCall (CsField (arr_cs, "__objectStorage"), []), idx_cs)
 			in
 			let cs_op = if op = Increment then CsOpIncrement else CsOpDecrement in
 			let is_postfix = pos = Postfix in
@@ -3602,7 +3635,7 @@ let rec cs_expr_of_texpr ectx e =
 								begin match cs_arg with
 								| CsDefault t when is_null_cs t -> CsNull
 								| CsNew (t, [value; CsConst (CsConstBool true)]) when is_null_cs t -> value
-								| _ when expr_produces_csharp_null_type ectx.gctx arg ->
+								| _ when is_null_struct_value ectx.gctx arg ->
 									CsCall (CsField (cs_arg, "toDynamic"), [])
 								| _ -> cs_arg
 								end
@@ -4779,7 +4812,11 @@ let rec cs_expr_of_texpr ectx e =
 				(* Values get boxed to object when placed in object[]. For Null<T> structs,
 				   we must call coerce_cs_types to invoke .toDynamic(), otherwise the struct
 				   itself gets boxed instead of the underlying value (or null). *)
-				let coerced_val = CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx val_expr val_cs_type CsTypeObject in
+				(* A local or a field typed Null<T> by the optional field that receives it
+				   is still a plain T in C#: it is boxed as it is *)
+				let is_null_cs = match val_cs_type with CsTypeClass ((["haxe"; "lang"], "Null"), _) -> true | _ -> false in
+				let coerced_val = if is_null_cs && not (is_null_struct_value ectx.gctx e) then val_expr
+					else CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx val_expr val_cs_type CsTypeObject in
 				coerced_val :: name_expr :: acc
 			) [] fields in
 			let field_args = List.rev field_args in
@@ -4843,7 +4880,7 @@ let rec cs_expr_of_texpr ectx e =
 							List.map2 (fun item cs_item ->
 								match cs_item with
 								| CsDefault (CsTypeClass ((["haxe"; "lang"], "Null"), _)) -> CsNull
-								| _ when expr_produces_csharp_null_type ectx.gctx item ->
+								| _ when is_null_struct_value ectx.gctx item ->
 									CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item (cs_type_of_type ectx.gctx item.etype) CsTypeObject
 								| _ -> cs_item
 							) items cs_items
@@ -8193,7 +8230,9 @@ let generate_field gctx c cf is_static =
 								| CsTypeObject, t when t <> CsTypeObject && t <> CsTypeDynamic ->
 									(* Generate: var _hx_pname = (HaxeType)pname; *)
 									let param_name = escape_identifier pname in
-									let shadow_name = "_hx_" ^ param_name in
+									(* from the plain name: a keyword is escaped as @event, and
+									   _hx_@event is not a name *)
+									let shadow_name = "_hx_" ^ pname in
 									Some (shadow_name, param_name, haxe_cs)
 								| _ -> None
 							) pairs
@@ -8321,7 +8360,8 @@ let generate_field gctx c cf is_static =
 			| None -> not (has_class_flag c CExtern)
 			| Some (super_class, _) -> not (has_class_flag super_class CExtern)
 		in
-		let is_tostring_override = cf.cf_name = "toString" && not is_static && inherits_from_haxe_object in
+		(* Only the toString without arguments: with arguments it is another method *)
+		let is_tostring_override = cf.cf_name = "toString" && not is_static && inherits_from_haxe_object && args = [] in
 		let method_modifiers =
 			if is_static then modifiers
 			else if is_override cf || is_tostring_override then modifiers @ [MemberModifier.Override]
@@ -10346,7 +10386,37 @@ let generate_class gctx c =
 			(* Generate explicit interface implementations for covariant return types *)
 			members := generate_explicit_interface_impls gctx c cf @ !members;
 			(* Generate overload for contravariant overrides (method accepts wider type than parent) *)
-			members := generate_contravariant_override_overload gctx c cf @ !members
+			members := generate_contravariant_override_overload gctx c cf @ !members;
+			(* A toString whose arguments are all optional is still what Std.string() and
+			   string concatenation call: the toString() of HaxeObject leads to it *)
+			let inherits_from_haxe_object = match c.cl_super with
+				| None -> not (has_class_flag c CExtern)
+				| Some (super_class, _) -> not (has_class_flag super_class CExtern)
+			in
+			begin match cf.cf_kind, follow cf.cf_type with
+			| Method (MethNormal | MethInline), TFun (((_ :: _) as args), _)
+				when cf.cf_name = "toString" && inherits_from_haxe_object && List.for_all (fun (_, opt, _) -> opt) args ->
+				let defaults = List.map (fun (_, _, t) ->
+					let is_already_null = match follow t with
+						| TAbstract ({ a_path = ([], "Null") }, _) -> true
+						| _ -> false
+					in
+					CsDefault (cs_type_of_type gctx (if is_already_null then t else gctx.com.basic.tnull t))
+				) args in
+				members := CsMemberMethod {
+					m_name = "toString";
+					m_return_type = CsTypeString;
+					m_access = AccessModifier.Public;
+					m_modifiers = [MemberModifier.Override];
+					m_type_params = [];
+					m_params = [];
+					m_body = Some [CsReturn (Some (CsCall (CsField (CsThis, "toString"), defaults)))];
+					m_constraints = [];
+					m_explicit_interface = None;
+					m_attributes = [];
+				} :: !members
+			| _ -> ()
+			end
 		| None -> ()
 	) c.cl_ordered_fields;
 
@@ -10478,8 +10548,8 @@ let generate_interface gctx c =
 				prop_init = None;
 				prop_explicit_interface = None;
 			})
-		| Var { v_read = AccNormal; v_write = AccNo | AccNever } ->
-			(* Read-only interface field - generate as property with only getter *)
+		| Var { v_read = AccNormal; v_write = AccNo | AccNever | AccCtor } ->
+			(* Read-only interface field (a final field too) - generate as property with only getter *)
 			Some (CsMemberProperty {
 				prop_name = escape_identifier cf.cf_name;
 				prop_type = cs_type_of_type gctx cf.cf_type;
@@ -10535,7 +10605,7 @@ let generate_interface gctx c =
 			match cf.cf_kind with
 			| Var { v_read = AccNormal; v_write = AccNormal }
 			| Var { v_read = AccNormal; v_write = AccNever }
-			| Var { v_read = AccNormal; v_write = AccNo } -> Some cf.cf_name
+			| Var { v_read = AccNormal; v_write = AccNo | AccCtor } -> Some cf.cf_name
 			| Var { v_read = AccNo | AccNever; v_write = AccNormal } -> Some cf.cf_name
 			| Method MethDynamic -> Some cf.cf_name
 			| Method (MethNormal | MethInline) -> Some cf.cf_name
@@ -11171,6 +11241,42 @@ let generate com =
 		| _ -> ()
 	) com.types;
 
+	(* A class without a constructor, with initialized fields: Haxe gives it a constructor
+	   without arguments that holds the initializations. When its parent takes arguments,
+	   that constructor cannot be called like the one the class inherits. The
+	   initializations go back to the fields, and the class forwards the constructors of
+	   its parent like any class without a constructor. *)
+	List.iter (fun mt ->
+		match mt with
+		| TClassDecl c when not (has_class_flag c CInterface) && not (has_class_flag c CExtern) ->
+			let rec parent_ctor_has_args c = match c.cl_super with
+				| Some (sc, _) ->
+					begin match sc.cl_constructor with
+					| Some ctor when ctor.cf_name_pos = null_pos -> parent_ctor_has_args sc
+					| Some ctor -> (match follow ctor.cf_type with TFun (_ :: _, _) -> true | _ -> false)
+					| None -> parent_ctor_has_args sc
+					end
+				| None -> false
+			in
+			begin match c.cl_constructor with
+			| Some ({ cf_expr = Some { eexpr = TFunction { tf_args = []; tf_expr = body } } } as ctor)
+				when ctor.cf_name_pos = null_pos && parent_ctor_has_args c ->
+				let stmts = match body.eexpr with TBlock el -> el | _ -> [body] in
+				let rec skip e = match e.eexpr with TParenthesis e | TMeta (_, e) -> skip e | _ -> e in
+				let inits = List.map (fun e ->
+					match (skip e).eexpr with
+					| TBinop (OpAssign, { eexpr = TField ({ eexpr = TConst TThis }, FInstance (_, _, cf)) }, value) -> Some (cf, value)
+					| _ -> None
+				) stmts in
+				if List.for_all (fun i -> i <> None) inits then begin
+					List.iter (function Some (cf, value) -> cf.cf_expr <- Some value | None -> ()) inits;
+					c.cl_constructor <- None
+				end
+			| _ -> ()
+			end
+		| _ -> ()
+	) com.types;
+
 	(* Initialize the preprocessor for this-before-super detection *)
 	gctx.preprocessor <- new preprocessor com.basic cs_type_of_type_for_preprocessor;
 
@@ -11321,7 +11427,13 @@ let generate com =
 					(try
 						let f = PMap.find cf.cf_name c.cl_fields in
 						(match follow f.cf_type with
-						| TFun (_, ret) -> Some (apply_params c.cl_params tl ret)
+						| TFun (_, ret) ->
+							(* declared as a type parameter of that class: an object in C#,
+							   whatever the parameter is for the class that overrides it *)
+							let erased = f != cf && (match follow ret with
+								| TInst ({ cl_kind = KTypeParameter _ }, _) -> true
+								| _ -> false) in
+							Some (if erased then t_dynamic else apply_params c.cl_params tl ret)
 						| _ -> None)
 					with Not_found -> None)
 			in
@@ -11330,6 +11442,9 @@ let generate com =
 				let declared_cs = cs_type_of_type gctx declared in
 				let used_cs = cs_type_of_type gctx e.etype in
 				begin match declared_cs, used_cs with
+				| CsTypeObject, (CsTypeString | CsTypeClass _ | CsTypeInt | CsTypeDouble | CsTypeBool)
+					when not (CsTypeMapping.is_cs_native_generic_class c.cl_path) ->
+					{ e with eexpr = TCast ({ e with etype = declared }, None) }
 				| CsTypeClass (p1, _), CsTypeClass (p2, _)
 					when p1 <> p2 && p1 <> (["haxe"; "lang"], "Null") && p2 <> (["haxe"; "lang"], "Null") ->
 					{ e with eexpr = TCast ({ e with etype = declared }, None) }
