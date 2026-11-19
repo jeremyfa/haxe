@@ -970,6 +970,15 @@ let rec is_null_struct_value gctx e =
 	| TField (_, (FInstance (_, _, cf) | FStatic (_, cf) | FAnon cf)) -> is_null_cs cf.cf_type && is_null_cs e.etype
 	| _ -> expr_produces_csharp_null_type gctx e
 
+(* A value written to a field of a Dynamic object: a Null<T> is given as its value or
+   null, not as the Null<T> itself in a box *)
+let dynamic_field_value ectx e cs =
+	match cs with
+	| CsDefault (CsTypeClass ((["haxe"; "lang"], "Null"), _)) -> CsNull
+	| _ when is_null_struct_value ectx.gctx e ->
+		CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs (cs_type_of_type ectx.gctx e.etype) CsTypeObject
+	| _ -> cs
+
 (* The condition of an if or a loop as the bool C# wants: a Dynamic value is unboxed *)
 let bool_condition ectx cond cond_cs =
 	match cs_type_of_type ectx.gctx cond.etype with
@@ -1764,7 +1773,7 @@ let rec cs_expr_of_texpr ectx e =
 						CsField (obj_expr, "value")
 					| _ -> obj_expr
 				in
-				let val_cs = cs_expr_of_texpr ectx e2 in
+				let val_cs = dynamic_field_value ectx e2 (cs_expr_of_texpr ectx e2) in
 				CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString name); val_cs])
 			| TField (obj, FAnon cf) ->
 				(* Anonymous field assignment - check if it's a truly dynamic object or a known type *)
@@ -1788,7 +1797,7 @@ let rec cs_expr_of_texpr ectx e =
 				begin match cs_type with
 				| CsTypeClass ((["haxe"; "lang"], "HaxeDynamicObject"), _) ->
 					(* Dynamic object - use _hx_setField *)
-					CsCall (CsField (obj_expr, "_hx_setField"), [CsConst (CsConstString cf.cf_name); val_cs])
+					CsCall (CsField (obj_expr, "_hx_setField"), [CsConst (CsConstString cf.cf_name); dynamic_field_value ectx e2 val_cs])
 				| CsTypeObject when anon_field_access ectx.gctx inner_type cf.cf_name <> None ->
 					(* Known structure: typed write through the accessor of its class *)
 					let (ac, af) = Option.get (anon_field_access ectx.gctx inner_type cf.cf_name) in
@@ -1797,7 +1806,7 @@ let rec cs_expr_of_texpr ectx e =
 					anon_value_of_field ectx af val_type (CsStaticCall (CsAnon.class_type ac, CsAnon.setter_name af, [obj_expr; value]))
 				| CsTypeObject ->
 					(* Object type - use Runtime.setField *)
-					CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString cf.cf_name); val_cs])
+					CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString cf.cf_name); dynamic_field_value ectx e2 val_cs])
 				| _ ->
 					(* Known anonymous type - generate direct field assignment *)
 					CsBinop (CsOpAssign, CsField (obj_expr, escape_identifier cf.cf_name), val_cs)
@@ -1811,7 +1820,7 @@ let rec cs_expr_of_texpr ectx e =
 				begin match cs_type with
 				| CsTypeObject ->
 					(* Type was erased to object - use Runtime.setField *)
-					CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString cf.cf_name); val_cs])
+					CsStaticCall (runtime_type, "setField", [obj_expr; CsConst (CsConstString cf.cf_name); dynamic_field_value ectx e2 val_cs])
 				| _ ->
 					(* Normal field assignment - generate field access WITHOUT the read-cast
 					   that would be added by the general TField handler. The read-cast is for

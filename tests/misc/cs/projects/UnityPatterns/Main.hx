@@ -73,6 +73,7 @@ class Main {
 		test("override of a method that returns a type parameter", testOverrideOfTypeParameterReturn);
 		test("Dynamic index of an array", testDynamicArrayIndex);
 		test("element changed in place in an array stored another way", testInPlaceOnOtherStorage);
+		test("Null value written to a field of a Dynamic object", testNullValueToDynamicField);
 		test("object literals given to structures", testObjectLiteralsForStructures);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
@@ -780,6 +781,26 @@ class Main {
 		sized.resize(2);
 		sized[1] += 3;
 		t(sized.join(",") == "0,3");
+	}
+
+	static function testNullValueToDynamicField() {
+		// from a property, a field and a method: the value or null is written
+		var props = new NullableProps();
+		var result:Dynamic = {};
+		result.tabSize = props.tabSize;
+		result.readOnly = props.readOnly;
+		result.plain = props.plain;
+		result.made = props.make();
+		t(result.tabSize == null && result.readOnly == null && result.plain == null && result.made == null);
+		props.tabSize = 2;
+		props.plain = 7;
+		result.tabSize = props.tabSize;
+		result.readOnly = props.readOnly;
+		result.plain = props.plain;
+		result.made = props.make();
+		t(isInt(result.tabSize) && result.tabSize == 2 && Std.isOfType(result.readOnly, Bool) && result.readOnly == true);
+		t(isInt(result.plain) && result.plain == 7 && isInt(result.made) && result.made == 2);
+		t(haxe.Json.stringify(result).indexOf('"tabSize":2') != -1);
 	}
 
 	static function testObjectLiteralsForStructures() {
@@ -2280,4 +2301,26 @@ class NumberOption extends ValueOption<Int> {
 
 	override public function pick(value:Int):Int
 		return value + 1;
+}
+
+class NullableProps {
+	public var tabSize(get, set):Null<Int>;
+	public var readOnly(get, never):Null<Bool>;
+	public var plain:Null<Int> = null;
+
+	var stored:Null<Int> = null;
+
+	public function new() {}
+
+	function get_tabSize():Null<Int>
+		return stored;
+
+	function set_tabSize(v:Null<Int>):Null<Int>
+		return stored = v;
+
+	function get_readOnly():Null<Bool>
+		return stored == null ? null : stored > 1;
+
+	public function make():Null<Int>
+		return stored;
 }
