@@ -2946,10 +2946,10 @@ let rec cs_expr_of_texpr ectx e =
 				m_attributes = [];
 			} in
 			(* Build invokeDynamic method - Array is non-generic in C# output *)
-			let args_array = CsField (CsLocal "args", "__objectArray") in
 			let invoke_dynamic_args = List.mapi (fun i cs_type ->
 				let idx_const = CsConst (CsConstInt (Int32.of_int i)) in
-				let arg_access = CsArrayAccess (args_array, idx_const) in
+				(* args is any Haxe array: [1, 2] holds ints, not objects *)
+			let arg_access = CsCall (CsField (CsLocal "args", "__getDyn"), [idx_const]) in
 				(* Use cast_object_to_type for proper unboxing of primitives *)
 				cast_object_to_type cs_type arg_access
 			) param_types_cs in
@@ -6844,7 +6844,6 @@ let generate_closure_class ectx tf func_type =
 		   - If arg is null, use default(Null<T>) which has hasValue=false
 		   - If arg is present, cast to inner T and let implicit conversion make Null<T>
 		   This prevents InvalidCastException when casting null to a value type. *)
-		let args_array = CsField (CsLocal "args", "__objectArray") in
 		let args_length = CsField (CsLocal "args", "length") in
 		(* Build list with (param, is_optional) *)
 		let params_with_opt = List.filter_map (fun (v, default_opt) ->
@@ -6854,7 +6853,8 @@ let generate_closure_class ectx tf func_type =
 		let call_args = List.mapi (fun i (param, param_type) ->
 			let (_, is_optional) = List.nth params_with_opt i in
 			let idx_const = CsConst (CsConstInt (Int32.of_int i)) in
-			let arg_access = CsArrayAccess (args_array, idx_const) in
+			(* args is any Haxe array: [1, 2] holds ints, not objects *)
+			let arg_access = CsCall (CsField (CsLocal "args", "__getDyn"), [idx_const]) in
 			match param_type with
 			| Some (CsTypeClass ((["haxe"; "lang"], "Null"), [inner_type]) as null_type) ->
 				(* Null<T> type - use _ofDynamic to properly handle:
@@ -7360,11 +7360,11 @@ and generate_method_closure_fallback ectx obj_expr is_static class_path type_par
 	     3. value → Null<T> with the value
 	   For optional parameters, check bounds before accessing. *)
 	let invoke_dynamic_body =
-		let args_array = CsField (CsLocal "args", "__objectArray") in
 		let args_length = CsField (CsLocal "args", "length") in
 		let dyn_call_args = List.mapi (fun i (param, is_optional) ->
 			let idx_const = CsConst (CsConstInt (Int32.of_int i)) in
-			let arg_access = CsArrayAccess (args_array, idx_const) in
+			(* args is any Haxe array: [1, 2] holds ints, not objects *)
+			let arg_access = CsCall (CsField (CsLocal "args", "__getDyn"), [idx_const]) in
 			match param.p_type with
 			| Some (CsTypeClass ((["haxe"; "lang"], "Null"), [_inner_type]) as null_type) ->
 				(* Null<T> type - use _ofDynamic for proper handling *)

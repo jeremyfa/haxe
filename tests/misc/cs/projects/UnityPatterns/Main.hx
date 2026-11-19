@@ -65,6 +65,7 @@ class Main {
 		test("Int given to a Dynamic argument through a function value", testIntThroughFunctionValue);
 		test("statements made from values", testStatementsFromValues);
 		test("function value returning a Null number, in a ternary", testNullReturnInTernary);
+		test("closure called with an array of numbers as arguments", testCallMethodTypedArgs);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -661,6 +662,21 @@ class Main {
 		t(methods[0] == null);
 		var one:Null<NodeId> = some != null ? some.resolver(0) : null;
 		t(one == null);
+	}
+
+	static function testCallMethodTypedArgs() {
+		// The arguments are read from the array whatever it stores (ints here, not objects)
+		var k = 10;
+		var add = (a:Int, b:Int) -> a + b + k;
+		var ints = [1, 2];
+		t(Reflect.callMethod(null, add, ints) == 13);
+		t(Reflect.callMethod(null, add, [3, 4]) == 17);
+		var not = (b:Bool) -> !b;
+		t(Reflect.callMethod(null, not, [true]) == false);
+		var half = (f:Float) -> f / 2;
+		t(Reflect.callMethod(null, half, [3.0]) == 1.5);
+		var mixed:Array<Dynamic> = [1.5, "x"];
+		t(Reflect.callMethod(null, (a:Float, s:String) -> s + a, mixed) == "x1.5");
 	}
 
 	static function testNativeBase() {
