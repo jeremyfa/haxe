@@ -110,6 +110,13 @@
 		"targets": ["TAbstract"]
 	},
 	{
+		"name": "ClassCode",
+		"metadata": ":classCode",
+		"doc": "Used to inject platform-native code into a class.",
+		"platforms": ["cs"],
+		"targets": ["TClass"]
+	},
+	{
 		"name": "Commutative",
 		"metadata": ":commutative",
 		"doc": "Declares an abstract operator as commutative.",

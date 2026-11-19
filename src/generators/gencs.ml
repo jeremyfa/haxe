@@ -9979,6 +9979,17 @@ let generate_class gctx c =
 	if class_init_stmts <> [] then
 		members := CsMemberStaticConstructor class_init_stmts :: !members;
 
+	(* @:classCode("..."): C# members written by hand, added to the class as they are
+	   (what Haxe cannot express: iterators with yield, DllImport declarations...) *)
+	List.iter (fun (m, args, p) ->
+		match m, args with
+		| Meta.ClassCode, [(EConst (String (code, _)), _)] ->
+			members := CsMemberRaw code :: !members
+		| Meta.ClassCode, _ ->
+			Error.typing_error "@:classCode expects one string" p
+		| _ -> ()
+	) c.cl_meta;
+
 	(* Type parameter erasure: ALL Haxe generic classes become non-generic in C# output.
 	   This is the universal type erasure strategy (like Java's type erasure).
 	   Type parameters only exist at Haxe compile-time for type checking.

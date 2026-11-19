@@ -1062,6 +1062,31 @@ and print_member ctx class_name = function
 	| CsMemberIndexer _ -> print ctx "// TODO: indexer"
 	| CsMemberOperator _ -> print ctx "// TODO: operator"
 	| CsMemberNestedType td -> print_type_def ctx td
+	| CsMemberRaw code ->
+		(* Keep the relative indentation of the lines, at the indentation of the class body *)
+		let lines = String.split_on_char '\n' code in
+		let lines = List.map (fun l ->
+			let n = String.length l in
+			if n > 0 && l.[n - 1] = '\r' then String.sub l 0 (n - 1) else l
+		) lines in
+		let is_blank l = String.trim l = "" in
+		let rec drop_blank = function l :: rest when is_blank l -> drop_blank rest | l -> l in
+		let lines = List.rev (drop_blank (List.rev (drop_blank lines))) in
+		let indent_of l =
+			let rec loop i = if i < String.length l && (l.[i] = ' ' || l.[i] = '\t') then loop (i + 1) else i in
+			loop 0
+		in
+		let common = List.fold_left (fun acc l ->
+			if is_blank l then acc else min acc (indent_of l)
+		) max_int lines in
+		let first = ref true in
+		List.iter (fun l ->
+			if !first then first := false else newline ctx;
+			if not (is_blank l) then begin
+				let l = String.sub l common (String.length l - common) in
+				print ctx l
+			end
+		) lines
 
 (* Print class *)
 and print_class ctx c =

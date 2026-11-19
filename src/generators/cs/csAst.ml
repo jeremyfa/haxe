@@ -275,6 +275,7 @@ type cs_member =
 	| CsMemberIndexer of cs_indexer_def
 	| CsMemberOperator of cs_operator_def
 	| CsMemberNestedType of cs_type_def
+	| CsMemberRaw of string  (* C# members written by hand (@:classCode), printed as they are *)
 
 (* Enum member *)
 and cs_enum_member = {
