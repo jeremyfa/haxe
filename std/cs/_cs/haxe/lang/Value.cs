@@ -15,7 +15,8 @@ namespace haxe.lang
     ///
     /// Sentinel logic (checked via reference equality):
     /// - obj == NoValue: No value (missing optional argument, or void return)
-    /// - obj == PrimValue: int/long value in prim field
+    /// - obj == PrimValue: int value in prim field
+    /// - obj == PrimLong: long value in prim field
     /// - obj == PrimBool: bool value in prim field (0L=false, 1L=true)
     /// - obj == PrimDoubleEncoded: double/float value encoded via BitConverter in prim field
     /// - obj == anything else (including null): Object value in obj field
@@ -30,6 +31,7 @@ namespace haxe.lang
         // Sentinel objects for discriminating value types
         private static readonly object NoValue = new object();
         private static readonly object PrimValue = new object();
+        private static readonly object PrimLong = new object();  // long value in prim field (an Int stays an Int in toDynamic)
         private static readonly object PrimDoubleEncoded = new object();  // double/float encoded via BitConverter
         private static readonly object PrimBool = new object();  // bool value in prim field (0L=false, 1L=true)
 
@@ -66,7 +68,7 @@ namespace haxe.lang
         /// <summary>Create from long/Int64 value - stored directly, no precision loss!</summary>
         public static global::haxe.lang.Value fromLong(long value)
         {
-            return new global::haxe.lang.Value(PrimValue, value);
+            return new global::haxe.lang.Value(PrimLong, value);
         }
 
         /// <summary>Create from double - uses BitConverter for lossless storage</summary>
@@ -106,7 +108,7 @@ namespace haxe.lang
         public static global::haxe.lang.Value fromNullLong(global::haxe.lang.Null<long> value)
         {
             if (value.hasValue)
-                return new global::haxe.lang.Value(PrimValue, value.value);
+                return new global::haxe.lang.Value(PrimLong, value.value);
             else
                 return new global::haxe.lang.Value(NoValue, 0L);
         }
@@ -161,7 +163,7 @@ namespace haxe.lang
         {
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return (int)global::System.BitConverter.Int64BitsToDouble(prim);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return (int)prim;
             if (ReferenceEquals(obj, PrimBool))
                 return (int)prim;  // 1 for true, 0 for false
@@ -174,7 +176,7 @@ namespace haxe.lang
         {
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return (long)global::System.BitConverter.Int64BitsToDouble(prim);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return prim;
             if (ReferenceEquals(obj, PrimBool))
                 return prim;  // 1L for true, 0L for false
@@ -187,7 +189,7 @@ namespace haxe.lang
         {
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return global::System.BitConverter.Int64BitsToDouble(prim);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return (double)prim;  // long to double
             if (ReferenceEquals(obj, PrimBool))
                 return (double)prim;  // 1.0 for true, 0.0 for false
@@ -200,7 +202,7 @@ namespace haxe.lang
         {
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return (float)global::System.BitConverter.Int64BitsToDouble(prim);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return (float)prim;  // long to float
             if (ReferenceEquals(obj, PrimBool))
                 return (float)prim;  // 1.0f for true, 0.0f for false
@@ -215,7 +217,7 @@ namespace haxe.lang
                 return global::System.BitConverter.Int64BitsToDouble(prim) != 0.0;
             if (ReferenceEquals(obj, PrimBool))
                 return prim != 0L;
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return prim != 0L;
             if (ReferenceEquals(obj, NoValue))
                 return false;
@@ -224,14 +226,14 @@ namespace haxe.lang
 
         public T toObject<T>() where T : class
         {
-            if (ReferenceEquals(obj, NoValue) || ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
+            if (ReferenceEquals(obj, NoValue) || (ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
                 return null;
             return (T)obj;
         }
 
         public string toStringValue()
         {
-            if (ReferenceEquals(obj, NoValue) || ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
+            if (ReferenceEquals(obj, NoValue) || (ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
                 return null;
             return (string)obj;
         }
@@ -245,7 +247,7 @@ namespace haxe.lang
                 return new global::haxe.lang.Null<int>(0, false);
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return new global::haxe.lang.Null<int>((int)global::System.BitConverter.Int64BitsToDouble(prim), true);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return new global::haxe.lang.Null<int>((int)prim, true);
             if (ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<int>((int)prim, true);
@@ -264,7 +266,7 @@ namespace haxe.lang
                 return new global::haxe.lang.Null<long>(0L, false);
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return new global::haxe.lang.Null<long>((long)global::System.BitConverter.Int64BitsToDouble(prim), true);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return new global::haxe.lang.Null<long>(prim, true);
             if (ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<long>(prim, true);
@@ -283,7 +285,7 @@ namespace haxe.lang
                 return new global::haxe.lang.Null<double>(0.0, false);
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return new global::haxe.lang.Null<double>(global::System.BitConverter.Int64BitsToDouble(prim), true);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return new global::haxe.lang.Null<double>((double)prim, true);
             if (ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<double>((double)prim, true);
@@ -302,7 +304,7 @@ namespace haxe.lang
                 return new global::haxe.lang.Null<float>(0.0f, false);
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return new global::haxe.lang.Null<float>((float)global::System.BitConverter.Int64BitsToDouble(prim), true);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return new global::haxe.lang.Null<float>((float)prim, true);
             if (ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<float>((float)prim, true);
@@ -323,7 +325,7 @@ namespace haxe.lang
                 return new global::haxe.lang.Null<bool>(global::System.BitConverter.Int64BitsToDouble(prim) != 0.0, true);
             if (ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<bool>(prim != 0L, true);
-            if (ReferenceEquals(obj, PrimValue))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)))
                 return new global::haxe.lang.Null<bool>(prim != 0L, true);
             // Handle boxed Null<bool> from reflection calls
             if (obj is global::haxe.lang.Null<bool> nullBool)
@@ -336,7 +338,7 @@ namespace haxe.lang
         {
             if (ReferenceEquals(obj, NoValue))
                 return new global::haxe.lang.Null<T>(null, false);
-            if (ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
+            if ((ReferenceEquals(obj, PrimValue) || ReferenceEquals(obj, PrimLong)) || ReferenceEquals(obj, PrimDoubleEncoded) || ReferenceEquals(obj, PrimBool))
                 return new global::haxe.lang.Null<T>(null, false);
             return new global::haxe.lang.Null<T>((T)obj, true);
         }
@@ -356,7 +358,9 @@ namespace haxe.lang
             if (ReferenceEquals(obj, PrimDoubleEncoded))
                 return global::System.BitConverter.Int64BitsToDouble(prim);  // Box as Double
             if (ReferenceEquals(obj, PrimValue))
-                return prim;  // Box as Int64 — use Runtime.toInt/toLong for unboxing
+                return (int)prim;  // Box as Int32: the value is an Int for Std.isOfType and Type.typeof
+            if (ReferenceEquals(obj, PrimLong))
+                return prim;  // Box as Int64
             return obj;
         }
 

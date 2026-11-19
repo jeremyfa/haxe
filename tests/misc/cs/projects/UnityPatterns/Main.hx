@@ -61,6 +61,9 @@ class Main {
 		test("comparison of a Null number next to another condition", testNullComparisonGrouping);
 		test("break of a loop in a switch of an outer loop", testBreakOfInnerLoop);
 		test("Dynamic value in the literal of a typed array", testDynamicInArrayLiteral);
+		test("Null value given to generic code", testNullValueInGenericCode);
+		test("Int given to a Dynamic argument through a function value", testIntThroughFunctionValue);
+		test("statements made from values", testStatementsFromValues);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -556,6 +559,91 @@ class Main {
 		var names:Array<String> = [data.name, "x"];
 		t(names.join(",") == "n,x");
 	}
+
+	static function testNullValueInGenericCode() {
+		// A Null<Int> given where C# takes an object is its value or null, never the
+		// Null<int> struct in a box (which is not null)
+		var none:Null<Int> = Sys.args().length > 100 ? 1 : null;
+		var five:Null<Int> = 5;
+		var holder = new Holder<Null<Int>>();
+		holder.put(none);
+		t(holder.isEmpty() && holder.get() == null);
+		holder.put(five);
+		t(!holder.isEmpty() && holder.get() == 5 && isInt(holder.get()));
+		var list:Array<Null<Int>> = [];
+		list.push(none);
+		list.push(five);
+		list.unshift(none);
+		list.insert(1, five);
+		t(list.map(describeDynamic).join(",") == "null,5i,null,5i");
+		t(list.indexOf(five) == 1 && list.contains(none) && list.remove(five) && list.length == 3);
+		// in the literal of an array of Dynamic
+		var entry = new Holder<String>();
+		var rows = [for (e in [entry]) ([e.index(false), e.index(true), "s"] : Array<Dynamic>)];
+		t(rows[0][0] == null && rows[0][1] == 3 && isInt(rows[0][1]));
+		var mixed:Array<Dynamic> = [none, five];
+		t(mixed[0] == null && isInt(mixed[1]));
+	}
+
+	static function isInt(d:Dynamic):Bool
+		return Std.isOfType(d, Int);
+
+	static function describeDynamic(d:Dynamic):String
+		return d == null ? "null" : Std.string(d) + (Std.isOfType(d, Int) ? "i" : "?");
+
+	static function testIntThroughFunctionValue() {
+		// The Int is still an Int for the code that receives it as Dynamic
+		var describe:Dynamic->String = describeDynamic;
+		t(describe(5) == "5i");
+		t([1, 2].map(describeDynamic).join(",") == "1i,2i");
+		var same:Int->Dynamic = x -> x;
+		t(describeDynamic(same(7)) == "7i" && Type.typeof(same(7)) == TInt);
+		var big:haxe.Int64->Dynamic = x -> x;
+		t(Std.string(big(haxe.Int64.make(1, 0))) == "4294967296");
+		t(haxe.Json.stringify([1, 2].map(x -> (x : Dynamic))) == "[1,2]");
+	}
+
+	static function testStatementsFromValues() {
+		// a Dynamic condition of a value that needs statements
+		var data:Dynamic = {on: true, off: false};
+		var a = new Names();
+		var picked = data.on ? [a.finalize(), 2] : [3];
+		var other = data.off ? [a.finalize(), 2] : [3];
+		t(picked.length == 2 && other.length == 1);
+		// a variable every case of an exhaustive switch assigns
+		var code = Sys.args().length > 100 ? TooBig : TooSmall;
+		var label:String;
+		switch (code) {
+			case TooSmall:
+				label = "small";
+			case TooBig:
+				label = "big";
+		}
+		t(label == "small");
+		// a value made by inline C# code, not used
+		var total = 0.0;
+		for (i in 0...3) {
+			if (i == 1)
+				rounded(i + 0.5);
+			else
+				total += rounded(i + 0.25);
+		}
+		t(total == 2.5);
+		// the break of the loop, in a switch that gives a value
+		var seen = [];
+		for (i in 0...10) {
+			var name = switch (i) {
+				case 0: "zero";
+				case 3: break;
+				default: "n" + i;
+			}
+			seen.push(name);
+		}
+		t(seen.join(",") == "zero,n1,n2");
+	}
+
+	static inline function rounded(v:Float):Float
+		return cs.Syntax.code("((double)(float)({0}))", v);
 
 	static function testNativeBase() {
 		// What Unity needs from a MonoBehaviour written in Haxe: it creates the object
@@ -1867,4 +1955,22 @@ class Grouping {
 
 	public static inline function minus(a:Int, b:Int):Int
 		return a - b;
+}
+
+class Holder<T> {
+	var value:T;
+
+	public function new() {}
+
+	public function put(v:T):Void
+		value = v;
+
+	public function get():T
+		return value;
+
+	public function isEmpty():Bool
+		return value == null;
+
+	public function index(some:Bool):Null<Int>
+		return some ? 3 : null;
 }

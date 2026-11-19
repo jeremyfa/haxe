@@ -956,6 +956,12 @@ let dynamic_array_index ectx cs_expr_of_texpr idx =
 	| CsTypeObject | CsTypeDynamic -> CsStaticCall (runtime_type, "toInt", [idx_cs])
 	| _ -> idx_cs
 
+(* The condition of an if or a loop as the bool C# wants: a Dynamic value is unboxed *)
+let bool_condition ectx cond cond_cs =
+	match cs_type_of_type ectx.gctx cond.etype with
+	| CsTypeObject | CsTypeDynamic -> CsStaticCall (runtime_type, "toBool", [cond_cs])
+	| _ -> cond_cs
+
 (* ====== Call argument generation ====== *)
 
 (* Generate a single argument with coercion based on expected type.
@@ -3580,6 +3586,32 @@ let rec cs_expr_of_texpr ectx e =
 			wrap_call_with_prefix prefix_stmts result_type call_expr
 		end else begin
 			let (prefix_stmts, cs_args) = generate_call_args ectx cs_expr_of_texpr args param_types_base in
+			(* A parameter declared as a type parameter of the class is an object in C#.
+			   With T = Null<Int>, the argument is a Null<int>: C# would box the struct
+			   itself, which is never null. Its value or null is given instead. *)
+			let cs_args =
+				if CsTypeMapping.is_cs_native_generic_class c.cl_path then cs_args
+				else match follow_tfun_with_coro ectx.gctx.com.basic cf.cf_type with
+				| Some (declared_params, _) ->
+					let is_null_cs t = match t with CsTypeClass ((["haxe"; "lang"], "Null"), _) -> true | _ -> false in
+					List.mapi (fun i cs_arg ->
+						match List.nth_opt declared_params i, List.nth_opt param_types_base i, List.nth_opt args i with
+						| Some (_, _, declared), Some mapped, Some arg ->
+							begin match follow declared with
+							| TInst ({ cl_kind = KTypeParameter _ }, _) when is_null_cs (cs_type_of_type ectx.gctx mapped) ->
+								begin match cs_arg with
+								| CsDefault t when is_null_cs t -> CsNull
+								| CsNew (t, [value; CsConst (CsConstBool true)]) when is_null_cs t -> value
+								| _ when expr_produces_csharp_null_type ectx.gctx arg ->
+									CsCall (CsField (cs_arg, "toDynamic"), [])
+								| _ -> cs_arg
+								end
+							| _ -> cs_arg
+							end
+						| _ -> cs_arg
+					) cs_args
+				| None -> cs_args
+			in
 			(* For Array methods, use typed accessor methods when the element type is known.
 			   This avoids boxing/unboxing overhead. Methods like pop(), shift() become
 			   __popInt(), __shiftInt() etc. based on element type.
@@ -4805,7 +4837,16 @@ let rec cs_expr_of_texpr ectx e =
 					(* Reference type - use actual element type. A Dynamic value in a
 					   literal of a typed array (a String[]) is converted to that type. *)
 					let coerced_items = match elem_cs_type with
-						| CsTypeObject | CsTypeDynamic | CsTypeGenericParam _ -> cs_items
+						| CsTypeObject | CsTypeDynamic | CsTypeGenericParam _ ->
+							(* An array of objects: a Null<T> item is its value or null, not
+							   the Null<T> itself in a box (which is never null) *)
+							List.map2 (fun item cs_item ->
+								match cs_item with
+								| CsDefault (CsTypeClass ((["haxe"; "lang"], "Null"), _)) -> CsNull
+								| _ when expr_produces_csharp_null_type ectx.gctx item ->
+									CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item (cs_type_of_type ectx.gctx item.etype) CsTypeObject
+								| _ -> cs_item
+							) items cs_items
 						| _ ->
 							List.map2 (fun item cs_item ->
 								match cs_type_of_type ectx.gctx (get_effective_expr_type ectx.gctx item) with
@@ -5177,7 +5218,7 @@ let rec cs_expr_of_texpr ectx e =
 		if ExtType.is_void (follow e.etype) then begin
 			(* Void if/else in expression context: wrap in immediately invoked Action *)
 			(* ((Action)(() => { if (cond) { then } else { else } }))() *)
-			let cond_cs = cs_expr_of_texpr ectx cond in
+			let cond_cs = bool_condition ectx cond (cs_expr_of_texpr ectx cond) in
 			let then_stmt = cs_stmt_of_texpr ectx then_expr in
 			let else_stmt = cs_stmt_of_texpr ectx else_expr in
 			let if_stmt = CsIf (cond_cs, then_stmt, Some else_stmt) in
@@ -5566,13 +5607,16 @@ and cs_stmt_with_return_inner ectx is_void ret_cs_type e =
 		) catches in
 		CsTry (try_body, catch_clauses, None)
 	| TIf (cond, e_then, e_else_opt) ->
-		let cond_cs = cs_expr_of_texpr ectx cond in
+		let cond_cs = bool_condition ectx cond (cs_expr_of_texpr ectx cond) in
 		let then_body = cs_stmt_with_return_inner ectx is_void ret_cs_type e_then in
 		let else_body = Option.map (cs_stmt_with_return_inner ectx is_void ret_cs_type) e_else_opt in
 		CsIf (cond_cs, then_body, else_body)
 	| TSwitch (sw_subject,sw_cases,sw_default) ->
 		let sw = tswitch sw_subject sw_cases sw_default in
 		let switch_expr = cs_expr_of_texpr ectx sw.switch_subject in
+		(* A break in a case is the break of the enclosing loop (a goto, see TBreak) *)
+		let old_in_switch = ectx.in_switch in
+		ectx.in_switch <- true;
 		let cs_sections = List.map (fun case ->
 			let cs_labels = List.map (fun v -> CsCaseConst (cs_expr_of_texpr ectx v)) case.case_patterns in
 			let case_body_with_return = cs_stmt_with_return_inner ectx is_void ret_cs_type case.case_expr in
@@ -5584,6 +5628,7 @@ and cs_stmt_with_return_inner ectx is_void ret_cs_type e =
 				cs_sections @ [{ sw_labels = [CsCaseDefault]; sw_body = [def_body] }]
 			| None -> cs_sections
 		in
+		ectx.in_switch <- old_in_switch;
 		CsSwitch (switch_expr, cs_sections)
 	| TBlock exprs ->
 		let (init_exprs, last_opt) = split_last exprs in
@@ -5635,13 +5680,16 @@ and cs_stmt_with_result_assign ectx is_void result_var result_type e =
 		) catches in
 		CsTry (try_body, catch_clauses, None)
 	| TIf (cond, e_then, e_else_opt) ->
-		let cond_cs = cs_expr_of_texpr ectx cond in
+		let cond_cs = bool_condition ectx cond (cs_expr_of_texpr ectx cond) in
 		let then_body = cs_stmt_with_result_assign ectx is_void result_var result_type e_then in
 		let else_body = Option.map (cs_stmt_with_result_assign ectx is_void result_var result_type) e_else_opt in
 		CsIf (cond_cs, then_body, else_body)
 	| TSwitch (sw_subject,sw_cases,sw_default) ->
 		let sw = tswitch sw_subject sw_cases sw_default in
 		let switch_expr = cs_expr_of_texpr ectx sw.switch_subject in
+		(* A break in a case is the break of the enclosing loop (a goto, see TBreak) *)
+		let old_in_switch = ectx.in_switch in
+		ectx.in_switch <- true;
 		let cs_sections = List.map (fun case ->
 			let cs_labels = List.map (fun v -> CsCaseConst (cs_expr_of_texpr ectx v)) case.case_patterns in
 			let case_body_with_assign = cs_stmt_with_result_assign ectx is_void result_var result_type case.case_expr in
@@ -5653,6 +5701,7 @@ and cs_stmt_with_result_assign ectx is_void result_var result_type e =
 				cs_sections @ [{ sw_labels = [CsCaseDefault]; sw_body = [def_body] }]
 			| None -> cs_sections
 		in
+		ectx.in_switch <- old_in_switch;
 		CsSwitch (switch_expr, cs_sections)
 	| TBlock exprs ->
 		let (init_exprs, last_opt) = split_last exprs in
@@ -5811,7 +5860,10 @@ and cs_stmt_of_texpr ectx e =
 		(* Erase out-of-scope type params to avoid CS0246 errors *)
 		let var_type_raw = CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope var_type_raw in
 		begin match init with
-		| None -> CsVarDecl (name, Some var_type_raw, None)
+		| None ->
+			(* Declared with a value: Haxe accepts a variable that every case of an
+			   exhaustive switch assigns, where C# asks for a default case too *)
+			CsVarDecl (name, Some var_type_raw, Some (CsDefault var_type_raw))
 		| Some init_expr ->
 			(* Use cs_expr_with_prefix to handle block expressions smartly.
 			   Pass the variable type as hint so void-typed initializers (e.g., coroutine

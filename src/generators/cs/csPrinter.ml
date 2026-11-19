@@ -260,8 +260,47 @@ let print_type_params ctx = function
 		) params;
 		print ctx ">"
 
+(* Whether inline C# code starts with a cast, like "(double)(float)({0})": a cast is a
+   value, never a statement *)
+let inline_code_is_cast code =
+	let n = String.length code in
+	let is_ident_char c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '.' || c = ':' in
+	let rec skip_spaces i = if i < n && code.[i] = ' ' then skip_spaces (i + 1) else i in
+	let i = skip_spaces 0 in
+	if i >= n || code.[i] <> '(' then false
+	else begin
+		let start = skip_spaces (i + 1) in
+		let rec ident_end j = if j < n && is_ident_char code.[j] then ident_end (j + 1) else j in
+		let stop = ident_end start in
+		let close = skip_spaces stop in
+		if stop = start || close >= n || code.[close] <> ')' then false
+		else begin
+			let next = skip_spaces (close + 1) in
+			next < n && (code.[next] = '(' || code.[next] = '{' || is_ident_char code.[next]) && code.[next] <> '.'
+		end
+	end
+
+(* Whether inline C# code is all inside one pair of parentheses, like
+   "((double)(float)({0}))": a value too, C# refuses it as a statement *)
+let inline_code_is_parenthesized code =
+	let code = String.trim code in
+	let n = String.length code in
+	if n < 2 || code.[0] <> '(' || code.[n - 1] <> ')' then false
+	else begin
+		(* the parenthesis that closes the first one is the last character *)
+		let rec scan i depth =
+			if i >= n then false
+			else match code.[i] with
+				| '(' -> scan (i + 1) (depth + 1)
+				| ')' -> if depth = 1 then i = n - 1 else scan (i + 1) (depth - 1)
+				| _ -> scan (i + 1) depth
+		in
+		scan 0 0
+	end
+
 (* Check if an expression is valid as a C# statement *)
 let rec is_valid_statement_expr = function
+	| CsInlineCode (code, _) when inline_code_is_cast code || inline_code_is_parenthesized code -> false
 	| CsCall _ | CsStaticCall _ | CsNew _ | CsCallGeneric _ | CsStaticCallGeneric _ -> true
 	| CsBinop (CsOpAssign, _, _) | CsBinop (CsOpAssignOp _, _, _) -> true
 	| CsUnop (CsOpIncrement, _, _) | CsUnop (CsOpDecrement, _, _) -> true
