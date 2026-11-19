@@ -8374,6 +8374,8 @@ let generate_constructor gctx c cf field_init_stmts =
 			p_modifier = CsTypeMapping.param_modifier_of_type t;
 		}
 	) args in
+	(* Several arguments can be named `_` in Haxe: not in C# *)
+	let ctor_params = deduplicate_param_names ctor_params in
 
 	(* Extract tf_args for optional parameter defaults.
 	   Must be done before extract_super_call strips the TFunction wrapper. *)
