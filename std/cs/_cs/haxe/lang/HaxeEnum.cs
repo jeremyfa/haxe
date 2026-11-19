@@ -28,5 +28,14 @@ namespace haxe.lang
         {
             return EmptyParams;
         }
+
+        /// <summary>
+        /// The name of the constructor of this value, as written in Haxe.
+        /// Overridden by the class of each constructor.
+        /// </summary>
+        public virtual string _hx_getTag()
+        {
+            return GetType().Name;
+        }
     }
 }

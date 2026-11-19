@@ -32,7 +32,7 @@ private typedef __Int64 = cs.Int64;
 @:transitive
 abstract Int64(__Int64) from __Int64 to __Int64 {
 	public static inline function make(high:Int32, low:Int32):Int64
-		return new Int64(cs.Syntax.code("((long)((long){0} << 32 | (long)(uint){1}))", high, low));
+		return new Int64(cs.Syntax.code("((long)((long){0} << 32 | (long)unchecked((uint){1})))", high, low));
 
 	private inline function new(x:__Int64)
 		this = x;

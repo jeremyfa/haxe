@@ -610,7 +610,13 @@ let coerce_cs_types ?in_scope ~fresh_temp _gctx cs_arg arg_cs_type expected_cs_t
 		| CsTypeGenericParam name, Some scope when not (List.mem name scope) ->
 			CsTypeObject  (* Erase out-of-scope bare generic param to object *)
 		| _ -> expected_cs_type_raw  (* Keep all other types as-is *)
+	in	(* The same for the type of the value: what a call returns as a type parameter that is
+	   not one of this scope (the T of a static method of another class) is an object. *)
+	let arg_cs_type = match arg_cs_type, in_scope with
+		| CsTypeGenericParam name, Some scope when not (List.mem name scope) -> CsTypeObject
+		| _ -> arg_cs_type
 	in
+
 	(* FIRST: Check for ternary with mixed Null<T>/object branches targeting primitive type.
 	   C# cannot cast such ternaries directly to int/double/etc. because the branches have
 	   incompatible types. We must use Runtime.toInt/toDouble/etc. instead.

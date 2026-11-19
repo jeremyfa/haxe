@@ -49,6 +49,11 @@ class Main {
 		test("Dynamic values in typed code", testDynamicInTypedCode);
 		test("constructor argument named like a local of an inlined call", testConstructorArgumentNames);
 		test("increment of a Null<Int> in a comparison", testNullIncrementInComparison);
+		test("enum constructor named like its enum", testEnumConstructorName);
+		test("values converted to what receives them", testValueConversions);
+		test("null and _ arguments", testNullAndUnderscoreArguments);
+		test("constructor calling an overridable method, parent with arguments", testVirtualCallInConstructor);
+		test("abstract over a type parameter returned by a method", testAbstractOverTypeParameter);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -273,6 +278,89 @@ class Main {
 				break;
 		}
 		return done;
+	}
+
+	static function testEnumConstructorName() {
+		var s:Measure = Measures.of(12.5);
+		var px = switch s {
+			case Measure(size): size;
+			case Small: 1;
+			case Large: 3;
+		}
+		t(px == 12.5);
+		t(Type.enumConstructor(s) == "Measure" && Type.enumParameters(s)[0] == 12.5);
+		var made:Measure = Type.createEnum(Measure, "Measure", [2.0]);
+		t(Type.enumEq(made, Measures.of(2.0)));
+		var f = Measures.maker();
+		t(Type.enumEq(f(4), Measures.of(4)));
+		var small:Measure = Small;
+		var large:Measure = Large;
+		t(small != large && Type.enumIndex(large) == 2);
+	}
+
+	static function testValueConversions() {
+		// inline C# (Math.abs) given to an argument of another number type
+		var bits = haxe.io.FPHelper.floatToI32(Math.abs(-1.5));
+		t(haxe.io.FPHelper.i32ToFloat(bits) == 1.5);
+		// a null element in an array of Null<Float>
+		var maybe:Array<Null<Float>> = [null];
+		t(maybe.length == 1 && maybe[0] == null);
+		var mixed:Array<Null<Float>> = [1.5, null];
+		t(mixed[0] == 1.5 && mixed[1] == null);
+		// Dynamic values in the literal of an Array<Int>, an Int in an Array<Float>
+		var d:Dynamic = {order: 7};
+		var i = 2;
+		var ints:Array<Int> = [d.order, 0, i];
+		t(ints.join(",") == "7,0,2");
+		var floats:Array<Float> = [i, 0.5];
+		t(floats[0] + floats[1] == 2.5);
+		// an Int64 made of a negative low part, in a static initializer
+		t(Seeds.SEED == haxe.Int64.make(0x243F6A88, 0x85A308D3));
+		t(haxe.Int64.toStr(Seeds.SEED) == "2611923443488327891");
+	}
+
+	static function testNullAndUnderscoreArguments() {
+		// null fits the constructor argument and the EmptyConstructor one
+		var b = new StyleBox(null);
+		t(b.style == null);
+		var c = new StyleBox(new StyleBox(null));
+		t(c.style != null);
+		// `_` used as a real argument, with another `_` before it
+		t(Underscores.second(1, "two") == "two");
+		var u = new Underscores(3, "kept");
+		t(u.kept == "kept");
+		t(Underscores.make("x", 4).kept == "4");
+	}
+
+	static function testVirtualCallInConstructor() {
+		var leaf = new GradientElement("doc", 5);
+		t(leaf.document == "doc" && leaf.id == 5 && leaf.setupCalls == 1 && leaf.kind == "gradient");
+	}
+
+	static function testAbstractOverTypeParameter() {
+		var slot = new Slot(new Context(3));
+		var weak:Weak<Context> = new Weak(slot);
+		var strong:Context = weak.upgrade();
+		t(strong != null && strong.size == 3);
+		t((weak.upgrade() : Context).size == 3);
+		t(sizeOf(weak) == 3);
+		slot.alive = false;
+		t(weak.upgrade() == null);
+		// the same abstract as a field of a generic class
+		var keyed = new Keyed<Context>(cast new Context(7));
+		var entity:Context = keyed.entity;
+		t(entity.size == 7);
+		keyed.entity = cast new Context(8);
+		t(readKeyed(keyed).size == 8);
+	}
+
+	static function readKeyed(keyed:Keyed<Context>):Context {
+		return keyed.entity;
+	}
+
+	static function sizeOf(weak:Weak<Context>):Float {
+		var c:Context = weak.upgrade();
+		return c == null ? -1 : c.size;
 	}
 
 	static function testNativeBase() {
@@ -552,6 +640,14 @@ class Main {
 		t(leaf.at(0).name() == "leaf");
 		var deep = new DeepLeafNode();
 		t(deep.at(0).name() == "deep");
+		// what the override returns is used as its own type: a method of the child, a return
+		t(leaf.at(0).leafOnly() == 1);
+		t(deep.at(0).at(1).deepOnly() == 2);
+		t(sameLeaf(leaf).leafOnly() == 1);
+	}
+
+	static function sameLeaf(leaf:LeafNode):LeafNode {
+		return leaf.at(0);
 	}
 
 	static function testCapturedNullTypeParam() {
@@ -1146,6 +1242,92 @@ class GuardedChild extends GuardedBase {
 	}
 }
 
+class Seeds {
+	public static var SEED:haxe.Int64 = haxe.Int64.make(0x243F6A88, 0x85A308D3);
+}
+
+class StyleBox {
+	public var style:StyleBox;
+
+	public function new(style:StyleBox) {
+		this.style = style;
+	}
+}
+
+class Underscores {
+	public var kept:String;
+
+	public function new(_:Int, _:String) {
+		kept = _;
+	}
+
+	public static function second(_:Int, _:String):String {
+		return _;
+	}
+
+	public static function make(_:String, n:Int):Underscores {
+		return new Underscores(n, Std.string(n));
+	}
+}
+
+class Element {
+	public var document:String;
+	public var id:Int;
+	public var setupCalls = 0;
+	public var kind = "";
+
+	public function new(document:String, id:Int) {
+		this.document = document;
+		this.id = id;
+	}
+
+	public function setup():Void {
+		setupCalls++;
+	}
+}
+
+class GradientElement extends Element {
+	public function new(document:String, id:Int) {
+		super(document, id);
+		// a method that a child class can override
+		setup();
+	}
+
+	override public function setup():Void {
+		super.setup();
+		kind = "gradient";
+	}
+}
+
+class Slot {
+	public var model:Dynamic;
+	public var alive = true;
+
+	public function new(model:Dynamic) {
+		this.model = model;
+	}
+}
+
+abstract Strong<T>(T) to T {}
+
+abstract Weak<T>(Slot) {
+	public inline function new(slot:Slot) {
+		this = slot;
+	}
+
+	public function upgrade():Null<Strong<T>> {
+		return this.alive ? cast this.model : null;
+	}
+}
+
+class Keyed<T> {
+	public var entity:Strong<T>;
+
+	public function new(entity:Strong<T>) {
+		this.entity = entity;
+	}
+}
+
 class Emitter {
 	public var speed:Float = 1;
 
@@ -1277,6 +1459,10 @@ class LeafNode extends BaseNode {
 	override public function name():String {
 		return "leaf";
 	}
+
+	public function leafOnly():Int {
+		return 1;
+	}
 }
 
 class DeepLeafNode extends LeafNode {
@@ -1286,6 +1472,10 @@ class DeepLeafNode extends LeafNode {
 
 	override public function name():String {
 		return "deep";
+	}
+
+	public function deepOnly():Int {
+		return 2;
 	}
 }
 

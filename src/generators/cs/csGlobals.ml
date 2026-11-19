@@ -271,6 +271,12 @@ let get_cs_field_name c cf =
 
 (* Get enum constructor name, handling C# restriction where member names
    cannot be the same as the enclosing type name. *)
+(* Name of the nested class of an enum constructor that takes arguments: capitalized,
+   and with a suffix when it would be the name of the enum itself (the same restriction). *)
+let get_cs_enum_ctor_class_name (en : tenum) (ef : tenum_field) =
+	let name = escape_enum_ctor_name ef.ef_name in
+	if name = snd en.e_path then name ^ "_" else name
+
 let get_cs_enum_ctor_name (en : tenum) (ef : tenum_field) =
 	let enum_name = snd en.e_path in
 	let base_name = escape_identifier ef.ef_name in

@@ -104,8 +104,10 @@ let haxeobject_path = NativeTypes.haxe_object_path
    Since "_" is escaped to "__" by escape_identifier and these params are unused,
    we simply suffix each occurrence with its parameter index. *)
 let deduplicate_param_names params =
+	(* The last one keeps its name: it is the one that `_` refers to in the body *)
+	let last = List.fold_left (fun (i, last) p -> (i + 1, if p.p_name = "__" then i else last)) (0, -1) params |> snd in
 	List.mapi (fun i p ->
-		if p.p_name = "__" then { p with p_name = Printf.sprintf "__%d" i }
+		if p.p_name = "__" && i <> last then { p with p_name = Printf.sprintf "__%d" i }
 		else p
 	) params
 
@@ -981,6 +983,11 @@ let generate_single_arg ectx cs_expr_of_texpr arg expected_type =
 		| CsTypeGenericParam _ ->
 			(* Generic param - generate default(T) *)
 			CsDefault expected_cs_type
+		| CsTypeClass (path, _) when path <> (["haxe"; "lang"], "Function") ->
+			(* A class: the null is given its type. A bare null fits any reference type,
+			   and a call can then be ambiguous: every Haxe class also has the constructor
+			   that takes an EmptyConstructor. *)
+			CsCast (CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope expected_cs_type, CsNull)
 		| _ ->
 			(* Reference type - generate null *)
 			CsNull
@@ -995,17 +1002,26 @@ let generate_single_arg ectx cs_expr_of_texpr arg expected_type =
 		   Example: In evalBinop<T,C>(op:Binop<C,T>, e1:Expr<C>, e2:Expr<C>):T
 		   When matching OpAdd (Binop<Float,Float>), e1.etype becomes Expr<Float> (refined),
 		   but C# variable e1 is declared as Expr<C>. We need to cast Expr<C> -> Expr<double>. *)
+		(* Inline C# is given as it is, except for a number that C# does not convert by
+		   itself to the number type expected (Math.abs, a double, where a float is
+		   expected): that needs its cast like any other value. *)
+		let inline_code_arg () =
+			if CsTypeCoercion.needs_explicit_numeric_cast (cs_type_of_type ectx.gctx arg.etype) expected_cs_type then
+				CsCast (expected_cs_type, cs_arg)
+			else
+				cs_arg
+		in
 		let coerced = match arg.eexpr with
 		| TCall ({ eexpr = TIdent "__cs__" }, _) ->
 			(* Inline C# code from __cs__() — already has the correct C# type.
 			   Skip coercion to avoid wrapping with Runtime.toInt/etc. which would
 			   change the type (e.g., RegexOptions → int via Runtime.toInt). *)
-			cs_arg
+			inline_code_arg ()
 		| TCall ({ eexpr = TField (_, FStatic ({ cl_path = (["cs"], "Syntax") }, cf)) }, _)
 			when cf.cf_name = "code" || cf.cf_name = "plainCode" ->
 			(* Same as __cs__: inline C# code from cs.Syntax.code()/plainCode() already
 			   has the correct C# type. Skip coercion. *)
-			cs_arg
+			inline_code_arg ()
 		| TLocal v ->
 			let var_cs_type = cs_type_of_type ectx.gctx v.v_type in
 			(* Check if original var type differs from expected and requires cast *)
@@ -1096,9 +1112,11 @@ let generate_call_args ectx cs_expr_of_texpr args param_types =
 					   (Null<T> through toDynamic()). *)
 					let native_array = match storage_type with
 						| ArrayObject when not (CsTypeMapping.is_inherently_nullable elem_cs_type) ->
-							CsNewArray (CsTypeObject, List.map (fun cs_item ->
-								CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item elem_cs_type CsTypeObject
-							) rest_cs_args)
+							CsNewArray (CsTypeObject, List.map2 (fun arg cs_item ->
+								match arg.eexpr with
+								| TConst TNull -> CsNull
+								| _ -> CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item elem_cs_type CsTypeObject
+							) rest_args rest_cs_args)
 						| _ ->
 							CsNewArray (elem_cs_type, rest_cs_args)
 					in
@@ -2887,7 +2905,7 @@ let rec cs_expr_of_texpr ectx e =
 				| _ -> e.etype
 			in
 			(* Build the nested type for the constructor *)
-			let ctor_name = escape_enum_ctor_name ef.ef_name in
+			let ctor_name = get_cs_enum_ctor_class_name en ef in
 			let parent_type = CsTypeClass (path, type_args) in
 			let nested_type = CsTypeNested (parent_type, ctor_name) in
 			(* Generate a closure class inline that wraps the enum constructor *)
@@ -3099,7 +3117,7 @@ let rec cs_expr_of_texpr ectx e =
 		   After type erasure, both parent enum and constructor nested classes are non-generic.
 		   Constructor parameters types are erased to object. *)
 		let enum_path = cs_path_of_path en.e_path in
-		let ctor_name = escape_enum_ctor_name ef.ef_name in
+		let ctor_name = get_cs_enum_ctor_class_name en ef in
 		let parent_type = CsTypeClass (enum_path, []) in
 		let nested_type = CsTypeNested (parent_type, ctor_name) in
 		(* Get erased parameter types - with type erasure, type params become object *)
@@ -4757,13 +4775,24 @@ let rec cs_expr_of_texpr ectx e =
 			   For Null<T> elements, we must call coerce_cs_types to invoke .toDynamic(). *)
 			let native_array_type, native_array_items = match storage_type with
 				| ArrayObject when not (CsTypeMapping.is_inherently_nullable elem_cs_type) ->
-					(* Value type - create object[] and coerce elements (Null<T> → .toDynamic()) *)
-					let coerced_items = List.map (fun cs_item ->
-						CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item elem_cs_type CsTypeObject
-					) cs_items in
+					(* Value type - create object[] and coerce elements (Null<T> → .toDynamic()).
+					   A null element is a plain null in the object[]. *)
+					let coerced_items = List.map2 (fun item cs_item ->
+						match item.eexpr with
+						| TConst TNull -> CsNull
+						| _ -> CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item elem_cs_type CsTypeObject
+					) items cs_items in
 					(CsTypeObject, coerced_items)
+				| ArrayInt | ArrayFloat | ArrayBool ->
+					(* Typed storage (int[], double[], bool[]): an element whose own type is
+					   not the element type is converted (a Dynamic value in an Array<Int>
+					   literal, an Int in an Array<Float> literal) *)
+					let coerced_items = List.map2 (fun item cs_item ->
+						coerce_arg ~in_scope:ectx.type_params_in_scope ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item (get_effective_expr_type ectx.gctx item) elem_hx_type
+					) items cs_items in
+					(elem_cs_type, coerced_items)
 				| _ ->
-					(* Reference type or typed storage - use actual element type *)
+					(* Reference type - use actual element type *)
 					(elem_cs_type, cs_items)
 			in
 			let native_array = CsNewArray (native_array_type, native_array_items) in
@@ -4782,8 +4811,24 @@ let rec cs_expr_of_texpr ectx e =
 	| TCast (inner_e, mt_opt) ->
 		(* The target type is the outer expression's type (e.etype), not the inner expression's type *)
 		(* C# doesn't allow casting to void, so just emit the inner expression *)
+		let rec uncast e = match e.eexpr with
+			| TCast (inner, None) | TParenthesis inner | TMeta (_, inner) -> uncast inner
+			| _ -> e
+		in
+		let is_value_array_as_object_array =
+			mt_opt = None
+			&& (match cs_type_of_type ectx.gctx e.etype, cs_type_of_type ectx.gctx (uncast inner_e).etype with
+				| CsTypeArray (CsTypeObject, _), CsTypeArray (elem, _) -> CsTypeMapping.is_value_type elem
+				| _ -> false)
+		in
 		if ExtType.is_void (follow e.etype) then
 			cs_expr_of_texpr ectx inner_e
+		else if is_value_array_as_object_array then
+			(* A native array of a value type (int[]) seen as a native array of an erased
+			   type parameter (T[], which is object[]): there is no such conversion in C#,
+			   and the code that follows takes the array as it is (generic code inlined on a
+			   Vector<Int>, like Vector.blit). *)
+			cs_expr_of_texpr ectx (uncast inner_e)
 		else begin
 			(* For explicit unsafe cast (cast(expr, Type)), use Runtime.checkedCast to get
 			   proper runtime checking. This is needed because C# doesn't allow direct casts
@@ -5332,7 +5377,7 @@ let rec cs_expr_of_texpr ectx e =
 		let enum_path = cs_path_of_path en.e_path in
 		(* Haxe enums are non-generic in C#, so no type params *)
 		ignore enum_params;
-		let ctor_name = escape_enum_ctor_name ef.ef_name in
+		let ctor_name = get_cs_enum_ctor_class_name en ef in
 		(* For GADT constructors with their own type params, we need to infer the nested class's
 		   type arguments. The nested class only has EXTRA params (not in parent enum). *)
 		let parent_type_param_names = List.map (fun ttp -> ttp.ttp_name) en.e_params in
@@ -5756,6 +5801,12 @@ and cs_stmt_of_texpr ectx e =
 			   returns a type parameter, the Haxe type is the substituted type, but the
 			   C# expression actually produces object due to type erasure. *)
 			let init_type = cs_type_of_type ectx.gctx (get_effective_expr_type ectx.gctx init_expr) in
+			(* What a call returns as a type parameter that is not one of this scope (the T
+			   of a static method of another class) is an object *)
+			let init_type = match init_type with
+				| CsTypeGenericParam name when not (List.mem name ectx.type_params_in_scope) -> CsTypeObject
+				| _ -> init_type
+			in
 			let is_init_null_wrapper = match init_type with
 				| CsTypeClass ((["haxe"; "lang"], "Null"), _) -> true
 				| _ -> false
@@ -8566,7 +8617,7 @@ let generate_constructor gctx c cf field_init_stmts =
 					| _ -> whole
 				in
 				base_new_arg_types := base_ctor_types;
-				let body_stmts = generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"_hx_new" whole in
+				let body_stmts = generate_method_body gctx ~param_cs_names:(List.map (fun p -> p.p_name) ctor_params) ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"_hx_new" whole in
 				base_new_arg_types := [];
 				field_init_stmts @ body_stmts
 			| _ ->
@@ -8921,7 +8972,7 @@ let generate_constructor gctx c cf field_init_stmts =
 				(* The plain case: the body is given as the function it is, so that its
 				   arguments are handled like those of any method (their names, the types
 				   of the optional ones, their default values) *)
-				field_init_stmts @ generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"new" { fe with eexpr = TFunction { tf with tf_expr = e } }
+				field_init_stmts @ generate_method_body gctx ~param_cs_names:(List.map (fun p -> p.p_name) ctor_params) ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"new" { fe with eexpr = TFunction { tf with tf_expr = e } }
 			| Some e, _ -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"new" e @ extra_after_stmts
 			| None, _ -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ extra_after_stmts
 		in
@@ -10370,6 +10421,23 @@ let generate_interface gctx c =
 	}
 
 (* Generate C# enum from Haxe enum *)
+(* The name of an enum constructor, as Type.enumConstructor returns it. The C# class of
+   the constructor cannot give it: its name is capitalized, and has a suffix when the
+   constructor is named like the enum. *)
+let enum_tag_method ef =
+	CsMemberMethod {
+		m_name = "_hx_getTag";
+		m_access = AccessModifier.Public;
+		m_modifiers = [MemberModifier.Override];
+		m_type_params = [];
+		m_params = [];
+		m_return_type = CsTypeString;
+		m_body = Some [CsReturn (Some (CsConst (CsConstString ef.ef_name)))];
+		m_constraints = [];
+		m_explicit_interface = None;
+		m_attributes = [];
+	}
+
 let generate_enum gctx (e : tenum) =
 	let path = cs_path_of_path e.e_path in
 	let enum_name = snd path in
@@ -10504,7 +10572,7 @@ let generate_enum gctx (e : tenum) =
 					c_base = Some (CsTypeClass (path, type_param_refs));  (* Reference parent with parent's type params only *)
 					c_interfaces = [];
 					c_constraints = [];
-					c_members = fields @ [ctor; tostring_method; get_params_method];
+					c_members = fields @ [ctor; tostring_method; get_params_method; enum_tag_method ef];
 				} in
 				CsMemberNestedType nested_class :: acc
 			| _ ->
@@ -10543,7 +10611,7 @@ let generate_enum gctx (e : tenum) =
 						c_base = Some (CsTypeClass (path, type_param_refs));  (* Reference parent with type params *)
 						c_interfaces = [];
 						c_constraints = [];
-						c_members = [ctor; tostring_method];
+						c_members = [ctor; tostring_method; enum_tag_method ef];
 					} in
 					CsMemberNestedType nested_class :: acc
 				end else begin
@@ -10589,7 +10657,7 @@ let generate_enum gctx (e : tenum) =
 						c_base = Some (CsTypeClass (path, []));
 						c_interfaces = [];
 						c_constraints = [];
-						c_members = [ctor; instance; tostring_method];
+						c_members = [ctor; instance; tostring_method; enum_tag_method ef];
 					} in
 					(* Static field on parent that returns the instance *)
 					let field = CsMemberField {
@@ -11014,22 +11082,29 @@ let generate com =
 	   _hx_new too, to be called from it. (With a native parent, its constructor has to be
 	   called by `: base(...)` itself: nothing is changed.) *)
 	let rec mark_two_phase c =
-		let mark_parent () = match c.cl_super with
-			| Some (sc, _) when not (has_class_flag sc CExtern) -> mark_two_phase sc
-			| _ -> ()
-		in
-		match c.cl_constructor with
+		(match c.cl_constructor with
 		| Some cf when not (Meta.has Meta.HxGen cf.cf_meta) ->
-			cf.cf_meta <- (Meta.HxGen, [], null_pos) :: cf.cf_meta;
-			mark_parent ()
-		| Some _ -> ()
-		| None -> mark_parent ()
+			cf.cf_meta <- (Meta.HxGen, [], null_pos) :: cf.cf_meta
+		| _ -> ());
+		match c.cl_super with
+		| Some (sc, _) when not (has_class_flag sc CExtern) -> mark_two_phase sc
+		| _ -> ()
 	in
 	List.iter (fun mt ->
 		match mt with
 		| TClassDecl ({ cl_super = Some (sc, _); cl_constructor = Some cf } as c)
 			when not (has_class_flag c CExtern) && not (has_class_flag sc CExtern) ->
-			begin match cf.cf_expr with
+			(* Also the constructors that are generated this way for another reason (they call
+			   a method of `this` that a child can override): the constructor of the parent
+			   cannot be called by `: base(...)` with their arguments, which the constructor
+			   taking an EmptyConstructor does not have. *)
+			let parent_abstract_case =
+				has_class_flag sc CAbstract
+				&& List.exists (fun f -> match f.cf_kind with Var _ -> f.cf_expr <> None | _ -> false) c.cl_ordered_fields
+				&& List.exists (fun f -> has_class_field_flag f CfOverride) c.cl_ordered_fields
+			in
+			if needs_two_phase_construction cf || parent_abstract_case then mark_two_phase c
+			else begin match cf.cf_expr with
 			| Some e ->
 				begin match extract_super_call e with
 				| (Some _, Some { eexpr = TBlock (_ :: _) }, _) -> mark_two_phase c
@@ -11048,14 +11123,15 @@ let generate com =
 	   parameter and used as its constraint (what inlining `this` of a method produces).
 	   The value is cast to the class that declares the member, so that the access is a
 	   plain member access, and not a lookup by name through reflection. *)
-	let rec cast_erased_receivers e =
-		let e = Type.map_expr cast_erased_receivers e in
+	let is_type_param t = match follow t with
+		| TInst ({ cl_kind = KTypeParameter _ }, _) -> true
+		| _ -> false
+	in
+	(* The receiver of a member access: cast to the class that declares the member when
+	   its C# type is object (see above) *)
+	let cast_receiver e =
 		match e.eexpr with
 		| TField (obj, ((FInstance (c, tl, _) | FClosure (Some (c, tl), _)) as fa)) ->
-			let is_type_param t = match follow t with
-				| TInst ({ cl_kind = KTypeParameter _ }, _) -> true
-				| _ -> false
-			in
 			let declared_by_class = match c.cl_kind with KTypeParameter _ -> false | _ -> true in
 			let erased = is_type_param obj.etype || (match obj.eexpr with
 				| TLocal v -> is_type_param v.v_type
@@ -11066,6 +11142,86 @@ let generate com =
 			else
 				e
 		| _ -> e
+	in
+	(* What C# gets is an object (the declared type is made of type parameters, like an
+	   abstract over T) while Haxe knows the class it is here: cast to that class. *)
+	let cast_erased_value e declared =
+		if ExtType.is_void (follow e.etype) then e
+		else match cs_type_of_type gctx declared, cs_type_of_type gctx e.etype with
+			| (CsTypeObject | CsTypeGenericParam _), CsTypeClass (path, _)
+				when path <> (["haxe"; "lang"], "Null") ->
+				{ e with eexpr = TCast ({ e with etype = declared }, None) }
+			| _ -> e
+	in
+	(* The value of an expression, once its parts are handled *)
+	let cast_value e =
+		match e.eexpr with
+		| TField (_, FInstance (c, _, cf)) when not (has_class_flag c CExtern) ->
+			(* A field read. A method taken as a value is left alone. *)
+			begin match cf.cf_kind with
+			| Var _ ->
+				let e = cast_receiver e in
+				cast_erased_value e cf.cf_type
+			| Method _ -> cast_receiver e
+			end
+		| TField _ -> cast_receiver e
+		| TCall ({ eexpr = TField (_, FInstance (c, tl, cf)) }, _) ->
+			(* A method overridden with a more specific return type: the C# method returns
+			   what its first declaration returns (no covariant return types before .NET 5).
+			   The call is cast to the type that Haxe gives it. *)
+			let rec first_declaration c tl =
+				let above = match c.cl_super with
+					| Some (sc, stl) -> first_declaration sc (List.map (apply_params c.cl_params tl) stl)
+					| None -> None
+				in
+				match above with
+				| Some _ -> above
+				| None ->
+					(try
+						let f = PMap.find cf.cf_name c.cl_fields in
+						(match follow f.cf_type with
+						| TFun (_, ret) -> Some (apply_params c.cl_params tl ret)
+						| _ -> None)
+					with Not_found -> None)
+			in
+			begin match first_declaration c tl with
+			| Some declared when not (ExtType.is_void (follow e.etype)) ->
+				let declared_cs = cs_type_of_type gctx declared in
+				let used_cs = cs_type_of_type gctx e.etype in
+				begin match declared_cs, used_cs with
+				| CsTypeClass (p1, _), CsTypeClass (p2, _)
+					when p1 <> p2 && p1 <> (["haxe"; "lang"], "Null") && p2 <> (["haxe"; "lang"], "Null") ->
+					{ e with eexpr = TCast ({ e with etype = declared }, None) }
+				| _ -> e
+				end
+			| _ -> e
+			end
+		| TCall ({ eexpr = TField (_, FStatic (c, cf)) }, _) when not (has_class_flag c CExtern) ->
+			(* A static method that returns something of its own type parameters (for
+			   example `Null<Entity<T>>` where Entity<T> is an abstract over T) *)
+			begin match follow cf.cf_type with
+			| TFun (_, declared) -> cast_erased_value e declared
+			| _ -> e
+			end
+		| _ -> e
+	in
+	let rec cast_erased_receivers e =
+		match e.eexpr with
+		| TBinop ((OpAssign | OpAssignOp _) as op, target, value) ->
+			{ e with eexpr = TBinop (op, cast_target target, cast_erased_receivers value) }
+		| TUnop ((Increment | Decrement) as op, flag, target) ->
+			{ e with eexpr = TUnop (op, flag, cast_target target) }
+		| _ ->
+			cast_value (Type.map_expr cast_erased_receivers e)
+	(* What is assigned to: its parts are handled, its receiver is cast, but it is not
+	   read as a value *)
+	and cast_target e =
+		match e.eexpr with
+		| TField (obj, fa) -> cast_receiver { e with eexpr = TField (cast_erased_receivers obj, fa) }
+		| TArray (a, i) -> { e with eexpr = TArray (cast_erased_receivers a, cast_erased_receivers i) }
+		| TParenthesis inner -> { e with eexpr = TParenthesis (cast_target inner) }
+		| TMeta (m, inner) -> { e with eexpr = TMeta (m, cast_target inner) }
+		| _ -> cast_erased_receivers e
 	in
 	let cast_field cf = cf.cf_expr <- Option.map cast_erased_receivers cf.cf_expr in
 	List.iter (fun mt ->

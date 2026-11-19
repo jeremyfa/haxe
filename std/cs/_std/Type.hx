@@ -401,13 +401,9 @@ class Type {
 			return null;
 		if (isNativeEnumValue(e))
 			return cs.Syntax.code("global::System.Enum.GetName(((object){0}).GetType(), {0})", e);
-		// Get the class name which is the constructor name
-		var name:String = cs.Syntax.code("((object){0}).GetType().Name", e);
-		// Strip _Impl_ suffix for singleton enum constructors
-		if (StringTools.endsWith(name, "_Impl_")) {
-			return name.substr(0, name.length - 6);
-		}
-		return name;
+		// The class of each constructor gives its Haxe name (the name of the class itself
+		// can differ: it is capitalized, or has a suffix)
+		return cs.Syntax.code("((global::haxe.lang.HaxeEnum)(object){0})._hx_getTag()", e);
 	}
 
 	public static function enumParameters(e:EnumValue):Array<Dynamic> {
