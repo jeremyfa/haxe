@@ -31,6 +31,10 @@ let unify_cf map_type c cf el =
 				| [],[] ->
 					let fcc = make_field_call_candidate (List.rev acc) ret monos tf cf (c,cf,monos) in
 					Some fcc
+				| [],[(_,_,t)] when Type.ExtType.is_rest (follow t) ->
+					(* no value given for the rest argument *)
+					let fcc = make_field_call_candidate (List.rev acc) ret monos tf cf (c,cf,monos) in
+					Some fcc
 				| _ ->
 					None
 			in
