@@ -7311,7 +7311,7 @@ let () = generate_method_closure_ref := generate_method_closure
    method_name: optional name of the enclosing method (for closure naming)
    type_params_in_scope: type parameter names from class and method that are valid in this context
    type_param_constraints: constraints for type parameters (name -> C# constraint types) *)
-let generate_method_body gctx ?(param_cs_names=[]) ?(type_params_in_scope=[]) ?(type_param_constraints=[]) ?return_type ?class_path ?method_name e =
+let generate_method_body gctx ?(param_cs_names=[]) ?(register_args=[]) ?(type_params_in_scope=[]) ?(type_param_constraints=[]) ?return_type ?class_path ?method_name e =
 	(* Apply Null<T> syntax filter to the expression first *)
 	let e = CsNullable.filter gctx.com e in
 	let ectx = create_expr_context gctx in
@@ -7321,6 +7321,15 @@ let generate_method_body gctx ?(param_cs_names=[]) ?(type_params_in_scope=[]) ?(
 	ectx.origin_class_path <- class_path;  (* Set origin for closure grouping *)
 	ectx.type_params_in_scope <- type_params_in_scope;
 	ectx.type_param_constraints <- type_param_constraints;
+	(* register_args: the arguments of the enclosing function when e is only a part of its
+	   body (pieces of a constructor). Their names are taken before any local of the body
+	   gets one: a local with the name of an argument (declared by an inlined call) must
+	   be the one that is renamed. *)
+	List.iter (fun (v, _) ->
+		let param_name = escape_identifier v.v_name in
+		ectx.local_vars <- (v.v_id, param_name) :: ectx.local_vars;
+		ectx.used_names <- param_name :: ectx.used_names
+	) register_args;
 	match e.eexpr with
 	| TFunction tf ->
 		(* Unwrap TFunction - this happens for dynamic function assignments *)
@@ -8530,7 +8539,7 @@ let generate_constructor gctx c cf field_init_stmts =
 					| _ -> whole
 				in
 				base_new_arg_types := base_ctor_types;
-				let body_stmts = generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"_hx_new" whole in
+				let body_stmts = generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"_hx_new" whole in
 				base_new_arg_types := [];
 				field_init_stmts @ body_stmts
 			| _ ->
@@ -8545,7 +8554,7 @@ let generate_constructor gctx c cf field_init_stmts =
 				(* ALL pre-super stmts go before base._hx_new() so the parent constructor
 				   can access fields set by the child via virtual dispatch. *)
 				let pre_super_cs_stmts = match adjusted_pre_super_body_expr with
-					| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
+					| Some e -> generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
 					| None -> []
 				in
 				(* Assignments to INHERITED fields (not declared in this class) must also be
@@ -8556,7 +8565,7 @@ let generate_constructor gctx c cf field_init_stmts =
 					match inherited_assigns with
 					| [] -> []
 					| (first :: _) as assigns ->
-						generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" { first with eexpr = TBlock assigns }
+						generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" { first with eexpr = TBlock assigns }
 				in
 				let dependency_cs_stmts = match dependency_stmts with
 					| [] -> []
@@ -8595,7 +8604,7 @@ let generate_constructor gctx c cf field_init_stmts =
 				in
 				(* Post-super body (statements after the super call) *)
 				let post_super_stmts = match post_super_body_expr with
-					| Some e -> generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
+					| Some e -> generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"_hx_new" e
 					| None -> []
 				in
 				(* Generate preamble for optional parameters with default values *)
@@ -8850,9 +8859,14 @@ let generate_constructor gctx c cf field_init_stmts =
 		(* Generate constructor body - prepend field initializations that contain 'this'.
 		   Use adjusted_body_expr which has dependency statements removed (they're in the IIFE).
 		   Order: field_init_stmts, body_field_init_stmts (Issue11010), extra_before_stmts (explicit super), default_preamble, body, extra_after_stmts (implicit super) *)
-		let ctor_body = match adjusted_body_expr_without_field_inits with
-			| Some e -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"new" e @ extra_after_stmts
-			| None -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ extra_after_stmts
+		let ctor_body = match adjusted_body_expr_without_field_inits, cf.cf_expr with
+			| Some e, Some ({ eexpr = TFunction tf } as fe) when body_field_init_stmts = [] && extra_before_stmts = [] && extra_after_stmts = [] ->
+				(* The plain case: the body is given as the function it is, so that its
+				   arguments are handled like those of any method (their names, the types
+				   of the optional ones, their default values) *)
+				field_init_stmts @ generate_method_body gctx ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~return_type:gctx.com.basic.tvoid ~class_path:c.cl_path ~method_name:"new" { fe with eexpr = TFunction { tf with tf_expr = e } }
+			| Some e, _ -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ generate_method_body gctx ~register_args:tf_args ~type_params_in_scope:class_type_params ~type_param_constraints:class_constraints ~class_path:c.cl_path ~method_name:"new" e @ extra_after_stmts
+			| None, _ -> field_init_stmts @ body_field_init_stmts @ extra_before_stmts @ default_preamble @ extra_after_stmts
 		in
 		(* Wrap in unchecked if the constructor expression contains non-zero integer constants *)
 		let ctor_body = match cf.cf_expr with
