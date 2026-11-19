@@ -942,6 +942,12 @@ let dynamic_binop_helpers = [
 	(OpShl, "opShl"); (OpShr, "opShr"); (OpUShr, "opUshr")
 ]
 
+(* A variable typed haxe.Constraints.Function: an object in C#, called like a Dynamic value *)
+let is_function_constraint_var cf t =
+	match cf.cf_kind with
+	| Var _ -> (match follow t with TAbstract ({ a_path = (["haxe"], "Function") }, _) -> true | _ -> false)
+	| _ -> false
+
 (* Check if a type is Rest<T> and return the inner element type if so *)
 let get_rest_element_type t =
 	match Type.follow t with
@@ -3270,7 +3276,7 @@ let rec cs_expr_of_texpr ectx e =
 			CsCall (CsField (obj, method_name), cs_args)
 		end
 	| TCall ({ eexpr = TField (e_obj, FInstance (c, tl, cf)) }, args)
-	| TCall ({ eexpr = TField (e_obj, FClosure (Some (c, tl), cf)) }, args) ->
+	| TCall ({ eexpr = TField (e_obj, FClosure (Some (c, tl), cf)) }, args) when not (is_function_constraint_var cf (apply_params c.cl_params tl cf.cf_type)) ->
 		(* Check if this is a stored function field - we're calling a stored function,
 		   not invoking a regular method. In that case, we need to use invokeN methods.
 		   This includes:
@@ -4028,7 +4034,7 @@ let rec cs_expr_of_texpr ectx e =
 		| meth, _ ->
 			CsRaw ("/* unknown cs.Syntax method: " ^ meth ^ " */")
 		end
-	| TCall ({ eexpr = TField (_, FStatic (c, cf)) }, orig_args) ->
+	| TCall ({ eexpr = TField (_, FStatic (c, cf)) }, orig_args) when not (is_function_constraint_var cf cf.cf_type) ->
 		let return_type = e.etype in  (* Use the TCall's etype, not TField's *)
 		(* Check if this is a stored function field (dynamic method, var with function type, or Dynamic type).
 		   If so, we need to use Runtime.invokeFunction instead of direct call.
@@ -8691,6 +8697,38 @@ let generate_constructor gctx c cf field_init_stmts =
 	let (super_args, pre_super_body_expr, post_super_body_expr) = match cf.cf_expr with
 		| Some e -> extract_super_call e
 		| None -> (None, None, None)
+	in
+	(* A parent constructor with a rest argument (...T) takes one Array: the trailing
+	   arguments of super(...) are packed into an array literal, and a spread (...values)
+	   gives its array as is. *)
+	let super_args = match super_args, c.cl_super with
+		| Some args, Some (sc, tl) ->
+			let rec parent_ctor_args cls tl =
+				match cls.cl_constructor with
+				| Some ctor_cf ->
+					begin match follow ctor_cf.cf_type with
+					| TFun (base_args, _) -> List.map (fun (_, _, t) -> apply_params cls.cl_params tl t) base_args
+					| _ -> []
+					end
+				| None ->
+					begin match cls.cl_super with
+					| Some (parent, parent_tl) -> parent_ctor_args parent (List.map (apply_params cls.cl_params tl) parent_tl)
+					| None -> []
+					end
+			in
+			let params = parent_ctor_args sc tl in
+			let regular_count = List.length params - 1 in
+			begin match (if params = [] then None else get_rest_element_type (List.nth params regular_count)) with
+			| Some elem when List.length args >= regular_count ->
+				let regular = ExtList.List.take regular_count args in
+				let packed = match ExtList.List.drop regular_count args with
+					| [{ eexpr = TUnop (Spread, _, spread_expr) }] -> spread_expr
+					| rest_args -> mk (TArrayDecl rest_args) (gctx.com.basic.tarray elem) cf.cf_pos
+				in
+				Some (regular @ [packed])
+			| _ -> Some args
+			end
+		| _ -> super_args
 	in
 	(* Merge pre+post for uses that don't need the distinction (normal construction path).
 	   Two-phase construction handles them separately. *)

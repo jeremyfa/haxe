@@ -72,6 +72,7 @@ class Main {
 		testTypedStructures();
 		testStructureMethods();
 		testDynamicToString();
+		testRestSuperAndFunctionVar();
 		#if hxcoro
 		CoroutineTests.run();
 		#end
@@ -2029,6 +2030,23 @@ class Main {
 		return p.x + p.y;
 	}
 
+	// Rest arguments given to super(...), and a call of a variable typed
+	// haxe.Constraints.Function
+	static function testRestSuperAndFunctionVar() {
+		var one = new RestOne(3, 7);
+		eq(3, one.count);
+		eq("a|7", one.ids.join(","));
+		var two = new RestTwo(4, 2);
+		eq("b|2,c|2", two.ids.join(","));
+		var spread = new RestSpread(5, "x", "y", "z");
+		eq("x,y,z", spread.ids.join(","));
+		var none = new RestNone(6);
+		eq(0, none.ids.length);
+		var pool = new FunctionPool<String>(() -> "made");
+		eq("made", pool.obtain());
+		eq(5, FunctionPool.callStatic(2, 3));
+	}
+
 	// toString() through Dynamic on values that are not Haxe objects
 	static function testDynamicToString() {
 		var i:Dynamic = 12;
@@ -2427,6 +2445,58 @@ typedef TShape = {
 
 	function set_p(v)
 		return p = v;
+}
+
+class RestBase {
+	public var count:Int;
+	public var ids:Array<String>;
+
+	public function new(count:Int, ids:...String) {
+		this.count = count;
+		this.ids = ids.toArray();
+	}
+}
+
+class RestOne extends RestBase {
+	public function new(count:Int, slot:Int) {
+		super(count, "a|" + slot);
+	}
+}
+
+class RestTwo extends RestBase {
+	public function new(count:Int, slot:Int) {
+		super(count, "b|" + slot, "c|" + slot);
+	}
+}
+
+class RestSpread extends RestBase {
+	public function new(count:Int, ids:...String) {
+		super(count, ...ids);
+	}
+}
+
+class RestNone extends RestBase {
+	public function new(count:Int) {
+		super(count);
+	}
+}
+
+class FunctionPool<T> {
+	var instantiator:haxe.Constraints.Function;
+
+	static var adder:haxe.Constraints.Function = (a:Int, b:Int) -> a + b;
+
+	public function new(instantiator:Void->T) {
+		this.instantiator = instantiator;
+	}
+
+	public function obtain():T {
+		return this.instantiator();
+	}
+
+	public static function callStatic(a:Int, b:Int):Int {
+		return adder(a, b);
+	}
 }
 
 enum abstract DynKey(Int) {
