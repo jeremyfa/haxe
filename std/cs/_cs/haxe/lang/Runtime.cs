@@ -827,7 +827,11 @@ namespace haxe.lang
             if (prop != null) return unboxNull(prop.GetValue(obj));
 
             // Try method (e.g. the get_Item accessor of an indexer)
-            return getNativeMethod(obj, type, name);
+            object method = getNativeMethod(obj, type, name);
+            // toString() through Dynamic on a value that is not a Haxe object (Int, Float,
+            // Bool, a .NET object): .NET names it ToString. The result follows Std.string.
+            if (method == null && name == "toString") return new ToStringFunction(obj);
+            return method;
         }
 
         // Kept out of getField: the lambda captures its arguments, and C# allocates the
@@ -1056,6 +1060,29 @@ namespace haxe.lang
                 case 9: return str;
                 default: return null;
             }
+        }
+    }
+
+    /// <summary>
+    /// toString() read through Dynamic on a value that has no such member.
+    /// </summary>
+    internal sealed class ToStringFunction : Function
+    {
+        readonly object target;
+
+        public ToStringFunction(object target)
+        {
+            this.target = target;
+        }
+
+        public override global::haxe.lang.Value __hx_invoke0()
+        {
+            return global::haxe.lang.Value.fromObject(global::haxe.lang.Runtime.toStrConcat(target));
+        }
+
+        public override object invokeDynamic(global::haxe.root.Array args)
+        {
+            return global::haxe.lang.Runtime.toStrConcat(target);
         }
     }
 

@@ -9843,6 +9843,20 @@ let generate_static_field_accessors gctx c =
 	in
 	let accessor_needs_new = super_has_static_fields c in
 	let static_accessor_modifiers = if accessor_needs_new then [MemberModifier.New; MemberModifier.Static] else [MemberModifier.Static] in
+	(* _hx_getStaticMethodClosure only exists in the classes that have static methods: 'new'
+	   is needed when an ancestor has one, otherwise C# warns that nothing is hidden (CS0109). *)
+	let rec super_has_static_methods c =
+		match c.cl_super with
+		| None -> false
+		| Some (super_class, _) ->
+			let super_has = not (has_class_flag super_class CExtern) && not (Meta.has Meta.Unreflective super_class.cl_meta) && List.exists (fun cf ->
+				match cf.cf_kind with
+				| Method (MethNormal | MethInline) -> not (Meta.has Meta.Unreflective cf.cf_meta) && not (has_ref_out_args cf)
+				| _ -> false
+			) super_class.cl_ordered_statics in
+			super_has || super_has_static_methods super_class
+	in
+	let closure_accessor_modifiers = if super_has_static_methods c then [MemberModifier.New; MemberModifier.Static] else [MemberModifier.Static] in
 
 	(* Generate _hx_staticClosureCache field (nullable array of ClassMethodFunction).
 	   Skipped when -D cs.closure-cache is NOT set. *)
@@ -9952,7 +9966,7 @@ let generate_static_field_accessors gctx c =
 			m_name = "_hx_getStaticMethodClosure";
 			m_return_type = class_method_func_type;
 			m_access = AccessModifier.Internal;
-			m_modifiers = static_accessor_modifiers;
+			m_modifiers = closure_accessor_modifiers;
 			m_type_params = [];
 			m_params = [{ p_name = "index"; p_type = Some CsTypeInt; p_default = None; p_modifier = None }];
 			m_body = Some method_body;

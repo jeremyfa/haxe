@@ -71,6 +71,7 @@ class Main {
 		testExceptionSubclasses();
 		testTypedStructures();
 		testStructureMethods();
+		testDynamicToString();
 		#if hxcoro
 		CoroutineTests.run();
 		#end
@@ -2028,6 +2029,24 @@ class Main {
 		return p.x + p.y;
 	}
 
+	// toString() through Dynamic on values that are not Haxe objects
+	static function testDynamicToString() {
+		var i:Dynamic = 12;
+		eq("12", i.toString());
+		var d:Dynamic = 1.5;
+		eq("1.5", d.toString());
+		var b:Dynamic = true;
+		eq("true", b.toString());
+		var s:Dynamic = "text";
+		eq("text", s.toString());
+		var key:Dynamic = DynKey.SECOND;
+		eq("1", key.toString());
+		// a class with static methods whose parent only has a static variable
+		eq(3, StaticChild.twice(StaticBase.base) + 1);
+		var g:Dynamic = StaticChild.twice;
+		eq(4, g(2));
+	}
+
 	static function testTypedStructures() {
 		// Structures are created as typed classes and read through typed fields
 		var p:TPoint = {x: 1, y: 2};
@@ -2408,6 +2427,23 @@ typedef TShape = {
 
 	function set_p(v)
 		return p = v;
+}
+
+enum abstract DynKey(Int) {
+	var FIRST = 0;
+	var SECOND = 1;
+}
+
+class StaticBase {
+	public static var base:Int = 1;
+
+	public function new() {}
+}
+
+class StaticChild extends StaticBase {
+	public static function twice(v:Int):Int {
+		return v * 2;
+	}
 }
 
 class ShapeClass {
