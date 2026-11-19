@@ -54,6 +54,8 @@ class Main {
 		test("null and _ arguments", testNullAndUnderscoreArguments);
 		test("constructor calling an overridable method, parent with arguments", testVirtualCallInConstructor);
 		test("abstract over a type parameter returned by a method", testAbstractOverTypeParameter);
+		test("resize before the first value", testResizeBeforeFirstValue);
+		test("null check of a Null value typed by an abstract", testNullCheckOfAbstract);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -361,6 +363,48 @@ class Main {
 	static function sizeOf(weak:Weak<Context>):Float {
 		var c:Context = weak.upgrade();
 		return c == null ? -1 : c.size;
+	}
+
+	static function testResizeBeforeFirstValue() {
+		// The array gets its length before any value tells how it is stored
+		var objects:Array<Context> = [];
+		objects.resize(6);
+		objects[0] = new Context(1);
+		objects[5] = new Context(6);
+		t(objects.length == 6 && objects[0].size == 1 && objects[5].size == 6 && objects[3] == null);
+		objects.push(new Context(7));
+		t(objects.length == 7 && objects[6].size == 7 && objects[5].size == 6);
+
+		var ints:Array<Int> = [];
+		ints.resize(10);
+		ints[0] = 4;
+		t(ints.length == 10 && ints[0] == 4 && ints[9] == 0);
+		ints[9] = 5;
+		ints.push(6);
+		t(ints.length == 11 && ints[9] == 5 && ints[10] == 6);
+
+		var floats:Array<Float> = [];
+		floats.resize(3);
+		floats[2] = 1.5;
+		t(floats[0] == 0 && floats[2] == 1.5 && floats.length == 3);
+
+		var bools:Array<Bool> = [];
+		bools.resize(5);
+		bools[4] = true;
+		t(!bools[0] && bools[4] && bools.length == 5);
+	}
+
+	static function testNullCheckOfAbstract() {
+		var holder = new ErrorHolder();
+		t(holder.check() == "none");
+		holder.error = TooBig;
+		t(holder.check() == "too big");
+		holder.error = null;
+		t(holder.check() == "none" && holder.error == null);
+		var local:Null<ErrorCode> = holder.error;
+		t(local == null && !(local != null));
+		local = TooSmall;
+		t(local != null && local == TooSmall);
 	}
 
 	static function testNativeBase() {
@@ -1325,6 +1369,30 @@ class Keyed<T> {
 
 	public function new(entity:Strong<T>) {
 		this.entity = entity;
+	}
+}
+
+enum abstract ErrorCode(Int) {
+	var TooSmall = 1;
+	var TooBig = 2;
+
+	public function message():String {
+		return switch (cast this : ErrorCode) {
+			case TooSmall: "too small";
+			case TooBig: "too big";
+		}
+	}
+}
+
+class ErrorHolder {
+	public var error:Null<ErrorCode> = null;
+
+	public function new() {}
+
+	public function check():String {
+		if (error != null)
+			return error.message();
+		return "none";
 	}
 }
 

@@ -1809,6 +1809,10 @@ private enum abstract ArrayType(Int) {
 		var cap = minCapacity + 1;
 		if (cap < __hx_defaultCapacity)
 			cap = __hx_defaultCapacity;
+		// Never smaller than the array: `resize` gives a length to an array that has no
+		// value yet, and whose storage is only chosen by the first value written
+		if (cap < length)
+			cap = length;
 		__intArray = new cs.NativeArray<Int>(cap);
 	}
 
@@ -1816,6 +1820,10 @@ private enum abstract ArrayType(Int) {
 		var cap = minCapacity + 1;
 		if (cap < __hx_defaultCapacity)
 			cap = __hx_defaultCapacity;
+		// Never smaller than the array: `resize` gives a length to an array that has no
+		// value yet, and whose storage is only chosen by the first value written
+		if (cap < length)
+			cap = length;
 		__floatArray = new cs.NativeArray<Float>(cap);
 	}
 
@@ -1823,6 +1831,10 @@ private enum abstract ArrayType(Int) {
 		var cap = minCapacity + 1;
 		if (cap < __hx_defaultCapacity)
 			cap = __hx_defaultCapacity;
+		// Never smaller than the array: `resize` gives a length to an array that has no
+		// value yet, and whose storage is only chosen by the first value written
+		if (cap < length)
+			cap = length;
 		__boolArray = new cs.NativeArray<Bool>(cap);
 	}
 
@@ -1830,6 +1842,10 @@ private enum abstract ArrayType(Int) {
 		var cap = minCapacity + 1;
 		if (cap < __hx_defaultCapacity)
 			cap = __hx_defaultCapacity;
+		// Never smaller than the array: `resize` gives a length to an array that has no
+		// value yet, and whose storage is only chosen by the first value written
+		if (cap < length)
+			cap = length;
 		__objectArray = new cs.NativeArray<Dynamic>(cap);
 	}
 

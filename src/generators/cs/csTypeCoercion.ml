@@ -424,6 +424,11 @@ let coerce_to_null cs_arg arg_type expected_type =
 		if cs_arg = CsNull then
 			(* null literal → Null<T>: generate default *)
 			Some (CsDefault expected_type)
+		else if (match cs_arg with CsDefault t -> get_cs_null_inner t = None && is_cs_primitive_type t | _ -> false) then
+			(* A null literal typed by the value type alone (the null given to a Null<E>
+			   where E is an abstract over Int is typed E): default(int) would be a Null<int>
+			   that has the value 0. It is the Null<T> without a value. *)
+			Some (CsDefault expected_type)
 		else if is_cs_object_or_dynamic arg_type then
 			(* object/Dynamic → Null<T>: use _ofDynamic *)
 			Some (CsStaticCall (expected_type, "_ofDynamic", [cs_arg]))

@@ -1814,13 +1814,16 @@ let rec cs_expr_of_texpr ectx e =
 		   When inlining isNull<T>(maybeNull:Null<T>) with T=UInt, the comparison becomes
 		   "value == null" where null has type Int (the underlying type).
 		   Since value types can never be null in C#, this comparison is always false/true. *)
-		| OpEq when is_null_expr e2 && not (is_null_expr e1) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e2.etype) ->
+		(* (Only when the value compared is not a Null<T> in C#: the null literal can be typed
+		   by the value type alone while the other side is a Null<T> field or variable, as
+		   with a `Null<E>` field where E is an enum abstract over Int.) *)
+		| OpEq when is_null_expr e2 && not (is_null_expr e1) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e2.etype) && not (expr_produces_csharp_null_type ectx.gctx e1) ->
 			CsConst (CsConstBool false)
-		| OpEq when is_null_expr e1 && not (is_null_expr e2) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e1.etype) ->
+		| OpEq when is_null_expr e1 && not (is_null_expr e2) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e1.etype) && not (expr_produces_csharp_null_type ectx.gctx e2) ->
 			CsConst (CsConstBool false)
-		| OpNotEq when is_null_expr e2 && not (is_null_expr e1) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e2.etype) ->
+		| OpNotEq when is_null_expr e2 && not (is_null_expr e1) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e2.etype) && not (expr_produces_csharp_null_type ectx.gctx e1) ->
 			CsConst (CsConstBool true)
-		| OpNotEq when is_null_expr e1 && not (is_null_expr e2) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e1.etype) ->
+		| OpNotEq when is_null_expr e1 && not (is_null_expr e2) && CsTypeMapping.is_value_type (cs_type_of_type ectx.gctx e1.etype) && not (expr_produces_csharp_null_type ectx.gctx e2) ->
 			CsConst (CsConstBool true)
 		| OpEq when expr_produces_csharp_null_type ectx.gctx e1 && is_null_expr e2 ->
 			(* x == null  ->  !x.hasValue *)
