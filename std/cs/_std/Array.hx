@@ -68,6 +68,7 @@ private enum abstract ArrayType(Int) {
 
 	@:unreflective static var __hx_toString_depth = 0;
 	@:unreflective static inline final __hx_defaultCapacity = 4;
+	@:unreflective static inline final __hx_insertionSortMax = 16;
 
 	// =========================================================================
 	// Constructors and Factory Methods
@@ -299,34 +300,253 @@ private enum abstract ArrayType(Int) {
 		}
 	}
 
+	/**
+	 * Stable sort (insertion sort for short arrays, merge sort otherwise), like
+	 * hxcpp and JavaScript: elements that compare equal keep their order.
+	 * The array is sorted in its own storage: an `Array<Int>` stays an `int[]`.
+	 */
 	public function sort(f:T->T->Int):Void {
-		if (length == 0)
+		if (length < 2)
 			return;
-		// Upgrade to object for sorting to simplify implementation
-		if (__arrayType != TObject && __arrayType != Unknown) {
-			__upgradeToObject();
+		switch (__arrayType) {
+			case TInt:
+				__sortInt(cast f);
+			case TFloat:
+				__sortFloat(cast f);
+			case TBool:
+				__sortBool(cast f);
+			case TObject, Unknown:
+				if (__objectArray != null)
+					__sortObject(cast f);
 		}
-		quicksort(0, length - 1, f);
 	}
 
-	private function quicksort(lo:Int, hi:Int, f:T->T->Int):Void {
-		var i = lo, j = hi;
-		var p:T = cast __objectArray[(i + j) >> 1];
-		while (i <= j) {
-			while (i < hi && f(cast __objectArray[i], p) < 0)
+	private function __sortInt(f:Int->Int->Int):Void {
+		var n = length;
+		var a = __intArray;
+		if (n <= __hx_insertionSortMax) {
+			// Insertion sort: stable, and allocates nothing
+			var i = 1;
+			while (i < n) {
+				var v = a[i];
+				var j = i - 1;
+				while (j >= 0 && f(v, a[j]) < 0) {
+					a[j + 1] = a[j];
+					j--;
+				}
+				a[j + 1] = v;
 				i++;
-			while (j > lo && f(cast __objectArray[j], p) > 0)
-				j--;
-			if (i <= j) {
-				var t = __objectArray[i];
-				__objectArray[i++] = __objectArray[j];
-				__objectArray[j--] = t;
 			}
+			return;
 		}
-		if (lo < j)
-			quicksort(lo, j, f);
-		if (i < hi)
-			quicksort(i, hi, f);
+		// Bottom-up merge sort between the array and a buffer of the same size
+		var src = a;
+		var dst = new cs.NativeArray<Int>(n);
+		var width = 1;
+		while (width < n) {
+			var lo = 0;
+			while (lo < n) {
+				var mid = lo + width;
+				if (mid > n)
+					mid = n;
+				var hi = lo + 2 * width;
+				if (hi > n)
+					hi = n;
+				var i = lo;
+				var j = mid;
+				var k = lo;
+				while (i < mid && j < hi) {
+					// The right element goes first only when it is smaller: equal
+					// elements keep their order
+					if (f(src[j], src[i]) < 0)
+						dst[k++] = src[j++];
+					else
+						dst[k++] = src[i++];
+				}
+				while (i < mid)
+					dst[k++] = src[i++];
+				while (j < hi)
+					dst[k++] = src[j++];
+				lo += 2 * width;
+			}
+			var swap = src;
+			src = dst;
+			dst = swap;
+			width *= 2;
+		}
+		if (src != a)
+			cs.NativeArray.arraycopy(src, 0, a, 0, n);
+	}
+
+	private function __sortFloat(f:Float->Float->Int):Void {
+		var n = length;
+		var a = __floatArray;
+		if (n <= __hx_insertionSortMax) {
+			// Insertion sort: stable, and allocates nothing
+			var i = 1;
+			while (i < n) {
+				var v = a[i];
+				var j = i - 1;
+				while (j >= 0 && f(v, a[j]) < 0) {
+					a[j + 1] = a[j];
+					j--;
+				}
+				a[j + 1] = v;
+				i++;
+			}
+			return;
+		}
+		// Bottom-up merge sort between the array and a buffer of the same size
+		var src = a;
+		var dst = new cs.NativeArray<Float>(n);
+		var width = 1;
+		while (width < n) {
+			var lo = 0;
+			while (lo < n) {
+				var mid = lo + width;
+				if (mid > n)
+					mid = n;
+				var hi = lo + 2 * width;
+				if (hi > n)
+					hi = n;
+				var i = lo;
+				var j = mid;
+				var k = lo;
+				while (i < mid && j < hi) {
+					// The right element goes first only when it is smaller: equal
+					// elements keep their order
+					if (f(src[j], src[i]) < 0)
+						dst[k++] = src[j++];
+					else
+						dst[k++] = src[i++];
+				}
+				while (i < mid)
+					dst[k++] = src[i++];
+				while (j < hi)
+					dst[k++] = src[j++];
+				lo += 2 * width;
+			}
+			var swap = src;
+			src = dst;
+			dst = swap;
+			width *= 2;
+		}
+		if (src != a)
+			cs.NativeArray.arraycopy(src, 0, a, 0, n);
+	}
+
+	private function __sortBool(f:Bool->Bool->Int):Void {
+		var n = length;
+		var a = __boolArray;
+		if (n <= __hx_insertionSortMax) {
+			// Insertion sort: stable, and allocates nothing
+			var i = 1;
+			while (i < n) {
+				var v = a[i];
+				var j = i - 1;
+				while (j >= 0 && f(v, a[j]) < 0) {
+					a[j + 1] = a[j];
+					j--;
+				}
+				a[j + 1] = v;
+				i++;
+			}
+			return;
+		}
+		// Bottom-up merge sort between the array and a buffer of the same size
+		var src = a;
+		var dst = new cs.NativeArray<Bool>(n);
+		var width = 1;
+		while (width < n) {
+			var lo = 0;
+			while (lo < n) {
+				var mid = lo + width;
+				if (mid > n)
+					mid = n;
+				var hi = lo + 2 * width;
+				if (hi > n)
+					hi = n;
+				var i = lo;
+				var j = mid;
+				var k = lo;
+				while (i < mid && j < hi) {
+					// The right element goes first only when it is smaller: equal
+					// elements keep their order
+					if (f(src[j], src[i]) < 0)
+						dst[k++] = src[j++];
+					else
+						dst[k++] = src[i++];
+				}
+				while (i < mid)
+					dst[k++] = src[i++];
+				while (j < hi)
+					dst[k++] = src[j++];
+				lo += 2 * width;
+			}
+			var swap = src;
+			src = dst;
+			dst = swap;
+			width *= 2;
+		}
+		if (src != a)
+			cs.NativeArray.arraycopy(src, 0, a, 0, n);
+	}
+
+	private function __sortObject(f:Dynamic->Dynamic->Int):Void {
+		var n = length;
+		var a = __objectArray;
+		if (n <= __hx_insertionSortMax) {
+			// Insertion sort: stable, and allocates nothing
+			var i = 1;
+			while (i < n) {
+				var v = a[i];
+				var j = i - 1;
+				while (j >= 0 && f(v, a[j]) < 0) {
+					a[j + 1] = a[j];
+					j--;
+				}
+				a[j + 1] = v;
+				i++;
+			}
+			return;
+		}
+		// Bottom-up merge sort between the array and a buffer of the same size
+		var src = a;
+		var dst = new cs.NativeArray<Dynamic>(n);
+		var width = 1;
+		while (width < n) {
+			var lo = 0;
+			while (lo < n) {
+				var mid = lo + width;
+				if (mid > n)
+					mid = n;
+				var hi = lo + 2 * width;
+				if (hi > n)
+					hi = n;
+				var i = lo;
+				var j = mid;
+				var k = lo;
+				while (i < mid && j < hi) {
+					// The right element goes first only when it is smaller: equal
+					// elements keep their order
+					if (f(src[j], src[i]) < 0)
+						dst[k++] = src[j++];
+					else
+						dst[k++] = src[i++];
+				}
+				while (i < mid)
+					dst[k++] = src[i++];
+				while (j < hi)
+					dst[k++] = src[j++];
+				lo += 2 * width;
+			}
+			var swap = src;
+			src = dst;
+			dst = swap;
+			width *= 2;
+		}
+		if (src != a)
+			cs.NativeArray.arraycopy(src, 0, a, 0, n);
 	}
 
 	public function splice(pos:Int, len:Int):Array<T> {
