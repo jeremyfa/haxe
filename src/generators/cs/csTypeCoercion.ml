@@ -61,6 +61,37 @@ let is_cs_numeric_type = function
 	| CsTypeInt | CsTypeDouble | CsTypeFloat | CsTypeLong | CsTypeByte -> true
 	| _ -> false
 
+(* Check if C# type is a number of any size (char included: it converts like one) *)
+let is_cs_number_type = function
+	| CsTypeByte | CsTypeSByte | CsTypeChar | CsTypeShort | CsTypeUShort
+	| CsTypeInt | CsTypeUInt | CsTypeLong | CsTypeULong
+	| CsTypeFloat | CsTypeDouble | CsTypeDecimal -> true
+	| _ -> false
+
+(* The implicit numeric conversions of C#: a value of type [source] can be used where
+   [target] is expected without a cast. *)
+let cs_numeric_conversion_is_implicit source target =
+	match source, target with
+	| CsTypeSByte, (CsTypeShort | CsTypeInt | CsTypeLong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeByte, (CsTypeShort | CsTypeUShort | CsTypeInt | CsTypeUInt | CsTypeLong | CsTypeULong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeShort, (CsTypeInt | CsTypeLong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeUShort, (CsTypeInt | CsTypeUInt | CsTypeLong | CsTypeULong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeInt, (CsTypeLong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeUInt, (CsTypeLong | CsTypeULong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeLong, (CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeULong, (CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeChar, (CsTypeUShort | CsTypeInt | CsTypeUInt | CsTypeLong | CsTypeULong | CsTypeFloat | CsTypeDouble | CsTypeDecimal)
+	| CsTypeFloat, CsTypeDouble -> true
+	| _ -> false
+
+(* Two different number types that C# does not convert by itself: the generated code
+   must cast. Haxe lets these through without a cast expression, because the C# number
+   types are core type abstracts that unify from and to Int or Float
+   (`var f:Single = 0.5`, `var u:cs.UInt16 = n`). *)
+let needs_explicit_numeric_cast source target =
+	source <> target && is_cs_number_type source && is_cs_number_type target
+	&& not (cs_numeric_conversion_is_implicit source target)
+
 (* Check if C# type is a primitive (numeric or bool) *)
 let is_cs_primitive_type = function
 	| CsTypeInt | CsTypeDouble | CsTypeFloat | CsTypeLong | CsTypeByte
@@ -249,6 +280,7 @@ let coerce_numeric cs_arg arg_type expected_type =
 	| CsTypeDouble, CsTypeInt -> Some (CsCast (CsTypeDouble, cs_arg))
 	| CsTypeByte, CsTypeInt -> Some (CsCast (CsTypeByte, cs_arg))
 	| CsTypeInt, CsTypeDouble -> Some (CsCast (CsTypeInt, cs_arg))
+	| target, source when needs_explicit_numeric_cast source target -> Some (CsCast (target, cs_arg))
 	| _ -> None
 
 (* Handle object/Dynamic to primitive with _ofDynamic awareness.

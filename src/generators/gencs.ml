@@ -1060,8 +1060,18 @@ let generate_call_args ectx cs_expr_of_texpr args param_types =
 						let cs_arg = cs_expr_of_texpr ectx arg in
 						coerce_arg ~in_scope:ectx.type_params_in_scope ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_arg arg.etype rest_elem_type
 					) rest_args in
-					let native_array = CsNewArray (elem_cs_type, rest_cs_args) in
 					let storage_type = classify_cs_array_element_type elem_cs_type in
+					(* Like an array literal: object storage takes an object[], and an array of
+					   a value type (Null<int>[]) is not one. Its elements are converted to object
+					   (Null<T> through toDynamic()). *)
+					let native_array = match storage_type with
+						| ArrayObject when not (CsTypeMapping.is_inherently_nullable elem_cs_type) ->
+							CsNewArray (CsTypeObject, List.map (fun cs_item ->
+								CsTypeCoercion.coerce_cs_types ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item elem_cs_type CsTypeObject
+							) rest_cs_args)
+						| _ ->
+							CsNewArray (elem_cs_type, rest_cs_args)
+					in
 					make_array_from_native storage_type native_array haxe_array_type
 			end
 		in
@@ -5822,6 +5832,9 @@ and cs_stmt_of_texpr ectx e =
 					(* Same class type but different type params (e.g., Array<object> -> Array<int>).
 					   This can happen with abstract @:from casts that use generic type parameters. *)
 					CsCast (var_type, init_cs)
+				| _ when CsTypeCoercion.needs_explicit_numeric_cast init_type var_type ->
+					(* var f:Single = 0.5, var u:cs.UInt16 = n: C# does not narrow by itself *)
+					CsCast (var_type, init_cs)
 				| _ ->
 					(* Check if init_expr is a cs.Syntax.code call - inline C# code may return object
 					   even when the Haxe type is concrete (e.g., when accessing erased generic fields).
@@ -6264,13 +6277,31 @@ and cs_stmt_of_texpr ectx e =
 			let lhs_expr = { e with eexpr = TBinop (OpAssign, e1, { e2 with eexpr = TConst TNull; etype = e1.etype }) } in
 			let lhs_assign_cs = cs_expr_of_texpr ectx lhs_expr in
 			(* Replace the null RHS with our actual value *)
-			let assign_cs = match lhs_assign_cs with
-				| CsBinop (CsOpAssign, lhs_cs, _) -> CsBinop (CsOpAssign, lhs_cs, val_cs)
-				| CsStaticCall (t, "setField", [obj; name; _]) -> CsStaticCall (t, "setField", [obj; name; val_cs])
-				| CsCall (CsField (obj, "_hx_setField"), [name; _]) -> CsCall (CsField (obj, "_hx_setField"), [name; val_cs])
-				| other -> other  (* Fallback - shouldn't happen *)
+			let (value_stmts, assign_cs) = match lhs_assign_cs with
+				| CsBinop (CsOpAssign, lhs_cs, _) -> ([], CsBinop (CsOpAssign, lhs_cs, val_cs))
+				| CsStaticCall (t, "setField", [obj; name; _]) -> ([], CsStaticCall (t, "setField", [obj; name; val_cs]))
+				| CsCall (CsField (obj, "_hx_setField"), [name; _]) -> ([], CsCall (CsField (obj, "_hx_setField"), [name; val_cs]))
+				| _ ->
+					(* Any other form of assignment: an element of a Haxe array (arr.__setInt(i, v),
+					   which is also what a local captured by a closure becomes), a typed structure
+					   field, a property setter... The value goes into a local, and the assignment
+					   is generated again by the general case with that local as its right side. *)
+					let (value_stmts, value_name) = match val_cs with
+						| CsLocal name -> ([], name)
+						| _ ->
+							let name = fresh_temp ectx in
+							let decl_type = CsTypeMapping.erase_out_of_scope_type_params ectx.type_params_in_scope expected_cs_type in
+							([CsVarDecl (name, Some decl_type, Some val_cs)], name)
+					in
+					let value_expr = { e2 with
+						eexpr = TCall (
+							{ eexpr = TIdent "__cs__"; etype = t_dynamic; epos = e2.epos },
+							[{ eexpr = TConst (TString value_name); etype = ectx.gctx.com.basic.tstring; epos = e2.epos }]);
+						etype = e1.etype;
+					} in
+					(value_stmts, cs_expr_of_texpr ectx { e with eexpr = TBinop (OpAssign, e1, value_expr) })
 			in
-			CsBlock (result.er_stmts @ iife_stmts @ [CsExprStmt assign_cs])
+			CsBlock (result.er_stmts @ iife_stmts @ value_stmts @ [CsExprStmt assign_cs])
 		end
 	| _ ->
 		(* Expression statement - check if it's a void-typed control flow expression that can be emitted directly *)
@@ -7871,8 +7902,21 @@ let generate_field gctx c cf is_static =
 						let cf_super = PMap.find cf.cf_name c_super.cl_fields in
 						match cf_super.cf_kind with
 						| Method _ ->
-							(* Use DECLARED type without mapping - type params get erased to object *)
-							follow_tfun_with_coro gctx.com.basic cf_super.cf_type
+							(* The signature is the one of the first declaration of the method, at the
+							   top of the hierarchy: when this ancestor overrides it with a more specific
+							   return type itself, its own Haxe type is not what its C# method returns.
+							   (C# 9 has covariant returns, but not for .NET Standard 2.1, which is what
+							   Unity compiles against.) *)
+							let above = match c_super.cl_super with
+								| Some (grandparent, tl2) -> find_parent_types grandparent (List.map map_type tl2)
+								| None -> None
+							in
+							begin match above with
+							| Some _ -> above
+							| None ->
+								(* Use DECLARED type without mapping - type params get erased to object *)
+								follow_tfun_with_coro gctx.com.basic cf_super.cf_type
+							end
 						| _ -> None
 					with Not_found ->
 						match c_super.cl_super with
