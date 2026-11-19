@@ -56,6 +56,8 @@ class Main {
 		test("abstract over a type parameter returned by a method", testAbstractOverTypeParameter);
 		test("resize before the first value", testResizeBeforeFirstValue);
 		test("null check of a Null value typed by an abstract", testNullCheckOfAbstract);
+		test("null given to a local Null of an abstract over a number", testNullLocalOfAbstract);
+		test("arrays of an abstract over a number", testArrayOfAbstract);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -405,6 +407,67 @@ class Main {
 		t(local == null && !(local != null));
 		local = TooSmall;
 		t(local != null && local == TooSmall);
+	}
+
+	static function testNullLocalOfAbstract() {
+		// The null of these locals is typed by the abstract alone: none of them has a value
+		var flag = Sys.args().length > 100;
+		var id:Null<NodeId> = null;
+		if (flag)
+			id = new NodeId(1);
+		var ratio:Null<Ratio> = null;
+		if (flag)
+			ratio = new Ratio(0.5);
+		var later:Null<NodeId>;
+		later = null;
+		var list:Array<Null<NodeId>> = [null, new NodeId(4)];
+		var obj:{id:Null<NodeId>} = {id: null};
+		t(id == null && ratio == null && later == null && obj.id == null);
+		t(list[0] == null && list[1] != null && list[1] == new NodeId(4));
+		// in a closure, and given on as the only element of an array
+		var count = (() -> {
+			var replacement:Null<NodeId> = null;
+			if (flag)
+				replacement = new NodeId(2);
+			var ids:Null<Array<NodeId>> = replacement != null ? [replacement] : null;
+			return ids == null ? -1 : ids.length;
+		})();
+		t(count == -1);
+		id = new NodeId(0);
+		t(id != null && id == new NodeId(0));
+	}
+
+	static function testArrayOfAbstract() {
+		// Stored as the numbers they are (the storage is the one of an Array<Int>)
+		var ids:Array<NodeId> = [];
+		ids.resize(2);
+		for (i in 0...2)
+			ids[i] = new NodeId(7 + i);
+		ids.push(new NodeId(12));
+		var ints:Array<Int> = cast ids;
+		t(ints.join(",") == "7,8,12" && ids.indexOf(new NodeId(8)) == 1);
+		t(cs.Syntax.code("{0}.__intArray != null", ids));
+		var total = 0;
+		for (id in ids)
+			total += id.toInt();
+		t(total == 27);
+		var last:Null<NodeId> = ids.pop();
+		var none:Null<NodeId> = ([] : Array<NodeId>).pop();
+		t(last == new NodeId(12) && none == null && ids.length == 2);
+		var ratios:Array<Ratio> = [new Ratio(1.5), new Ratio(2.5)];
+		ratios.unshift(new Ratio(0.5));
+		t(ratios[0].toFloat() + ratios[2].toFloat() == 3.0);
+		t(cs.Syntax.code("{0}.__floatArray != null", ratios));
+		var codes:Array<ErrorCode> = [TooBig, TooSmall];
+		t(codes[1] == TooSmall && codes.contains(TooBig));
+		// map keeps numbers as numbers
+		var doubled = ids.map(id -> id.toInt() * 2);
+		t(doubled.join(",") == "14,16");
+		t(cs.Syntax.code("{0}.__intArray != null", doubled));
+		var halves = [1, 2].map(i -> i / 2);
+		t(halves.join(",") == "0.5,1" && cs.Syntax.code("{0}.__floatArray != null", halves));
+		var names = ids.map(id -> "n" + id.toInt());
+		t(names.join(",") == "n7,n8");
 	}
 
 	static function testNativeBase() {
@@ -1679,4 +1742,20 @@ class Names {
 	public function lock(event:Int):Int {
 		return event;
 	}
+}
+
+abstract NodeId(Int) {
+	public inline function new(v:Int)
+		this = v;
+
+	public inline function toInt():Int
+		return this;
+}
+
+abstract Ratio(Float) {
+	public inline function new(v:Float)
+		this = v;
+
+	public inline function toFloat():Float
+		return this;
 }

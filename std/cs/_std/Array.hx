@@ -91,14 +91,6 @@ private enum abstract ArrayType(Int) {
 		return a;
 	}
 
-	private static inline function alloc<Y>(size:Int):Array<Y> {
-		var a = new Array<Y>();
-		a.length = size;
-		a.__objectArray = new cs.NativeArray<Dynamic>(size);
-		a.__arrayType = TObject;
-		return a;
-	}
-
 	// =========================================================================
 	// Haxe API Methods (use __objectArray for backwards compatibility)
 	// =========================================================================
@@ -973,9 +965,10 @@ private enum abstract ArrayType(Int) {
 	}
 
 	public inline function map<S>(f:T->S):Array<S> {
-		var ret = alloc(length);
+		// push() picks the storage of the result: numbers are not boxed
+		var ret:Array<S> = [];
 		for (i in 0...length)
-			ret.__set(i, f(__get(i)));
+			ret.push(f(__get(i)));
 		return ret;
 	}
 

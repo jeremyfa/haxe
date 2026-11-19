@@ -5,6 +5,14 @@
 typedef Point = {x:Int, y:Int};
 typedef Options = {name:String, ?size:Int, ?ratio:Float};
 
+abstract Id(Int) {
+	public inline function new(v:Int)
+		this = v;
+
+	public inline function toInt():Int
+		return this;
+}
+
 class Counter {
 	public var total:Int = 0;
 
@@ -163,6 +171,15 @@ class Main {
 			for (i in 0...N) {
 				floats[i & 15] = i;
 				sum += floats[(i + 1) & 15];
+			}
+			sink = sum;
+		});
+		var ids:Array<Id> = [for (i in 0...16) new Id(i)];
+		check("array of an abstract over Int, read and write", NONE, () -> {
+			var sum = 0;
+			for (i in 0...N) {
+				ids[i & 15] = new Id(i);
+				sum += ids[(i + 1) & 15].toInt();
 			}
 			sink = sum;
 		});

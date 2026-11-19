@@ -136,7 +136,8 @@ let classify_array_element_type t =
 	| Some elem ->
 		(* Use follow_without_null to preserve Null<> wrappers.
 		   Null<Int>, Null<Float>, Null<Bool> must use __objectArray because they can hold null. *)
-		match Type.follow_without_null elem with
+		(* An abstract over a number (an id, an enum abstract) is stored like that number *)
+		match Abstract.follow_with_abstracts_without_null elem with
 		(* Check for Null<primitive> FIRST - these must use object storage *)
 		| TAbstract ({ a_path = ([], "Null") }, [inner]) ->
 			(match Type.follow inner with

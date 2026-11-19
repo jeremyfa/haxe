@@ -3593,7 +3593,7 @@ let rec cs_expr_of_texpr ectx e =
 				   Use follow_without_null to preserve Null<> wrappers. *)
 				let storage_type = match tl with
 					| [elem] ->
-						begin match Type.follow_without_null elem with
+						begin match Abstract.follow_with_abstracts_without_null elem with
 						(* Nullable primitives must use object storage *)
 						| TAbstract ({ a_path = ([], "Null") }, [inner]) ->
 							begin match follow inner with
@@ -3634,6 +3634,13 @@ let rec cs_expr_of_texpr ectx e =
 					| "insert", ArrayFloat -> Some "__insertFloat"
 					| "insert", ArrayBool -> Some "__insertBool"
 					| "insert", ArrayDynamic -> Some "__insertDyn"
+					(* The element accessors the inline methods of Array use (map, filter) *)
+					| "__get", ArrayInt -> Some "__getInt"
+					| "__get", ArrayFloat -> Some "__getFloat"
+					| "__get", ArrayBool -> Some "__getBool"
+					| "__set", ArrayInt -> Some "__setInt"
+					| "__set", ArrayFloat -> Some "__setFloat"
+					| "__set", ArrayBool -> Some "__setBool"
 					| _ -> None
 				in
 				begin match typed_method_name with
@@ -5784,6 +5791,20 @@ and cs_stmt_of_texpr ectx e =
 			   preamble without analyzer) use the correct type for the IIFE pattern. *)
 			let result = cs_expr_with_prefix ~result_type_hint:var_type_raw ectx init_expr in
 			let init_cs = result.er_expr in
+			(* The null given to a Null<E> where E is an abstract over a number is typed E:
+			   default(int) would make a Null<int> that has the value 0. It is the Null<T>
+			   without a value. *)
+			let init_cs =
+				let rec is_null_literal e = match e.eexpr with
+					| TConst TNull -> true
+					| TParenthesis e | TMeta (_, e) | TCast (e, None) -> is_null_literal e
+					| _ -> false
+				in
+				match init_cs, var_type_raw with
+				| CsDefault t, CsTypeClass ((["haxe"; "lang"], "Null"), _)
+					when t <> var_type_raw && is_null_literal init_expr -> CsDefault var_type_raw
+				| _ -> init_cs
+			in
 			(* NOTE: We intentionally do NOT use specific closure types for variable declarations.
 			   While it would enable direct typed invoke() calls, it breaks when the variable
 			   is reassigned to a different lambda (different closure class).
