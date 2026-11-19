@@ -41,6 +41,10 @@ class Main {
 		test("@:classCode", testClassCode);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
+		test("native array of a Haxe array", testArrayData);
+		test("resources written as files", testResourceFiles);
+		test("zlib compression", testZip);
+		test("createInstance with optional arguments", testCreateInstanceOptionalArgs);
 		test("field access through a constrained type parameter", testConstrainedTypeParam);
 		test("array variance", testArrayVariance);
 		test("Vector in a generic class", testVectorInGenericClass);
@@ -166,6 +170,112 @@ class Main {
 		var s = ["b", "a", "c"];
 		s.sort((x, y) -> x < y ? -1 : x > y ? 1 : 0);
 		t(s.join("") == "abc");
+	}
+
+	static function testArrayData() {
+		var ints = [1, 2, 3];
+		var rawInts = cs.ArrayData.ints(ints);
+		t(rawInts.length >= 3 && rawInts[1] == 2);
+		rawInts[1] = 20;
+		t(ints[1] == 20);
+
+		var floats:Array<Float> = [];
+		floats.push(1.5);
+		floats.push(2.5);
+		var rawFloats = cs.ArrayData.floats(floats);
+		t(rawFloats[0] + rawFloats[1] == 4);
+
+		// an empty array that was never written to
+		var empty:Array<Int> = [];
+		t(cs.ArrayData.ints(empty) != null);
+		empty.push(7);
+		t(cs.ArrayData.ints(empty)[0] == 7);
+
+		// filled through Dynamic: converted to int storage
+		var viaDynamic:Array<Int> = [];
+		var d:Dynamic = viaDynamic;
+		d.push(4);
+		d.push(5);
+		t(cs.ArrayData.ints(viaDynamic)[1] == 5);
+		t(viaDynamic[0] == 4 && viaDynamic.length == 2);
+
+		// an abstract over Int
+		var colors:Array<Rgba> = [new Rgba(0xFF00FF)];
+		t(cs.ArrayData.ints(cast colors)[0] == 0xFF00FF);
+
+		var strings = ["a", "b"];
+		t(cs.ArrayData.objects(strings)[1] == "b");
+		var bools = [true, false];
+		t(cs.ArrayData.bools(bools)[0] && !cs.ArrayData.bools(bools)[1]);
+
+		// an int array does not become an object array
+		var refused = false;
+		try {
+			cs.ArrayData.objects(ints);
+		} catch (e:Dynamic) {
+			refused = true;
+		}
+		t(refused);
+		t(ints[1] == 20);
+	}
+
+	static function testResourceFiles() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		t(names.join("|") == "hello|some data/with any name");
+		// embedded in the assembly by the project
+		t(haxe.Resource.getString("hello") == "hello resource");
+		var data = haxe.Resource.getBytes("some data/with any name");
+		t(data != null && data.length == 8 && data.get(3) == 255 && data.get(7) == 0);
+		t(haxe.Resource.getBytes("missing") == null);
+		t(haxe.Resource.getString("missing") == null);
+		t(cs.ResourceFiles.fileName("some data/with any name") == "some-x32data-x47with-x32any-x32name");
+
+		// a host that stores the files itself
+		var asked = [];
+		cs.ResourceFiles.loader = fileName -> {
+			asked.push(fileName);
+			return fileName == "hello" ? haxe.io.Bytes.ofString("from the host") : null;
+		};
+		t(haxe.Resource.getString("hello") == "from the host");
+		t(haxe.Resource.getBytes("some data/with any name") == null);
+		t(asked.join("|") == "hello|some-x32data-x47with-x32any-x32name");
+		cs.ResourceFiles.loader = null;
+		t(haxe.Resource.getString("hello") == "hello resource");
+	}
+
+	static function testZip() {
+		var text = [for (i in 0...200) "some text to compress " + (i % 7)].join("\n");
+		var data = haxe.io.Bytes.ofString(text);
+		for (level in [0, 1, 6, 9]) {
+			var packed = haxe.zip.Compress.run(data, level);
+			// (level 0 is not checked: Mono compresses whatever the level asked)
+			t(level == 0 || packed.length < data.length >> 2);
+			t(haxe.zip.Uncompress.run(packed).compare(data) == 0);
+			// also read by the inflate written in Haxe: the header and the checksum are valid
+			t(haxe.zip.InflateImpl.run(new haxe.io.BytesInput(packed)).compare(data) == 0);
+		}
+		t(haxe.zip.Uncompress.run(haxe.zip.Compress.run(haxe.io.Bytes.alloc(0), 9)).length == 0);
+		// data compressed by zlib itself
+		var fromZlib = haxe.io.Bytes.ofHex("78dacb48ac4855a8ca2c50c84067000080bd098c");
+		t(haxe.zip.Uncompress.run(fromZlib).toString() == "haxe zip haxe zip haxe zip");
+		var refused = false;
+		try {
+			haxe.zip.Uncompress.run(haxe.io.Bytes.ofString("not zlib data"));
+		} catch (e:Dynamic) {
+			refused = true;
+		}
+		t(refused);
+	}
+
+	static function testCreateInstanceOptionalArgs() {
+		// Arguments that are all optional: none given, they take their default values
+		var o:OptionalArgs = Type.createInstance(OptionalArgs, []);
+		t(o != null && o.a == null && o.b == "x" && o.c == 3);
+		var p:OptionalArgs = Type.createInstance(OptionalArgs, [5]);
+		t(p.a == 5 && p.b == "x" && p.c == 3);
+		var q:OptionalArgs = Type.createInstance(OptionalArgs, [5, "y", 9]);
+		t(q.a == 5 && q.b == "y" && q.c == 9);
 	}
 
 	// ---------------------------------------------------------------------
@@ -887,6 +997,24 @@ class Compact {
 		for (item in old)
 			if (same(item, item))
 				n++;
+	}
+}
+
+abstract Rgba(Int) {
+	public inline function new(value:Int) {
+		this = value;
+	}
+}
+
+@:keep class OptionalArgs {
+	public var a:Null<Int>;
+	public var b:String;
+	public var c:Int;
+
+	public function new(?a:Int, b:String = "x", c:Int = 3) {
+		this.a = a;
+		this.b = b;
+		this.c = c;
 	}
 }
 

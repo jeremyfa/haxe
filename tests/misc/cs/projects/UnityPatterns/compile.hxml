@@ -6,6 +6,10 @@
 -D cs.library
 -D cs.aot
 -D cs.closure-cache
+# Resources as files, like in a Unity project (cs.ResourceFiles)
+-D cs.resource-files
+--resource res/hello.txt@hello
+--resource res/data.bin@some data/with any name
 # 1. Compile the output like Unity does: .NET Standard 2.1, C# 9, no unsafe code,
 #    and without the NETSTANDARD symbol (Unity does not define it).
 --cmd dotnet build unitylike/UnityLike.csproj -c Release -nodeReuse:false -p:UseSharedCompilation=false

@@ -50,6 +50,25 @@ class Cs {
 		sys.io.File.saveContent("Project.aot.csproj", StringTools.replace(project, "  </PropertyGroup>", aot));
 	}
 
+	// Build the C# project of the current directory the way Unity compiles the generated
+	// files: a library, .NET Standard 2.1, C# 9, no unsafe code, and without the
+	// NETSTANDARD symbol (Unity does not define it)
+	static function runUnityLikeBuild():Void {
+		var project = sys.io.File.getContent("Project.csproj");
+		project = StringTools.replace(project, "<OutputType>Exe</OutputType>", "<OutputType>Library</OutputType>");
+		project = StringTools.replace(project, "<TargetFramework>net8.0</TargetFramework>",
+			"<TargetFramework>netstandard2.1</TargetFramework>\n"
+			+ "    <LangVersion>9.0</LangVersion>\n"
+			+ "    <DisableImplicitFrameworkDefines>true</DisableImplicitFrameworkDefines>\n"
+			+ "    <DefineConstants>NET_STANDARD;NET_STANDARD_2_0;NET_STANDARD_2_1</DefineConstants>\n"
+			+ "    <AssemblyName>UnityLike</AssemblyName>\n"
+			+ "    <BaseIntermediateOutputPath>obj-unity/</BaseIntermediateOutputPath>");
+		project = StringTools.replace(project, "<AllowUnsafeBlocks>true</AllowUnsafeBlocks>", "<AllowUnsafeBlocks>false</AllowUnsafeBlocks>");
+		sys.io.File.saveContent("Project.unity.csproj", project);
+		infoMsg("Building like Unity does (.NET Standard 2.1, C# 9)...");
+		runCommand("dotnet", ["build", "Project.unity.csproj", "-c", "Release", "-o", "bin/unity"]);
+	}
+
 	// Run AOT test for a compiled C# project in the current directory
 	static function runAotTest():Void {
 		createAotProjectFile();
@@ -129,6 +148,8 @@ class Cs {
 		changeDirectory("bin/cs");
 		infoMsg("=== Running Unit Tests (AOT) ===");
 		runAotTest();
+		// The same generated files, compiled like Unity does
+		runUnityLikeBuild();
 
 		changeDirectory(unitDir);
 
@@ -150,6 +171,7 @@ class Cs {
 		changeDirectory("bin");
 		infoMsg("=== Running Bootstrap Tests (AOT) ===");
 		runAotTest();
+		runUnityLikeBuild();
 
 		// === Misc Tests (projects) ===
 		changeDirectory(miscCsDir);
