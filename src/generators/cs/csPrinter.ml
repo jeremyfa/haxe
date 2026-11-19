@@ -69,20 +69,54 @@ let get_output ctx =
 let escape_string s =
 	let b = Buffer.create (String.length s + 2) in
 	Buffer.add_char b '"';
-	String.iter (fun c ->
-		match c with
-		| '"' -> Buffer.add_string b "\\\""
-		| '\\' -> Buffer.add_string b "\\\\"
-		| '\n' -> Buffer.add_string b "\\n"
-		| '\r' -> Buffer.add_string b "\\r"
-		| '\t' -> Buffer.add_string b "\\t"
-		| c when Char.code c < 32 ->
-			(* Use \uXXXX format (exactly 4 hex digits) instead of \xXX because
-			   C#'s \x escape is greedy and can consume up to 4 hex digits,
-			   causing issues when followed by hex characters (e.g., \x05B -> 0x5B) *)
-			Buffer.add_string b (Printf.sprintf "\\u%04x" (Char.code c))
-		| c -> Buffer.add_char b c
-	) s;
+	let len = String.length s in
+	let byte i = Char.code (String.unsafe_get s i) in
+	(* \uXXXX: exactly 4 hex digits, unlike \x, which takes up to 4 and would also take
+	   the hex characters that follow *)
+	let add_unit u = Buffer.add_string b (Printf.sprintf "\\u%04x" u) in
+	let is_continuation i = i < len && byte i land 0xC0 = 0x80 in
+	let i = ref 0 in
+	while !i < len do
+		let c = byte !i in
+		if c < 0x80 then begin
+			(match Char.chr c with
+			| '"' -> Buffer.add_string b "\\\""
+			| '\\' -> Buffer.add_string b "\\\\"
+			| '\n' -> Buffer.add_string b "\\n"
+			| '\r' -> Buffer.add_string b "\\r"
+			| '\t' -> Buffer.add_string b "\\t"
+			| _ when c < 32 || c = 0x7F -> add_unit c
+			| ch -> Buffer.add_char b ch);
+			incr i
+		end else begin
+			(* A character of several UTF-8 bytes. Most are written as they are. Some cannot
+			   be in the source of a C# string: the line separators that C# takes as the end
+			   of the line (U+0085, U+2028, U+2029), the other C1 controls, the byte order
+			   mark, and lone surrogates, which a Haxe string can hold (as 3 bytes) but valid
+			   UTF-8 cannot. They are written as \uXXXX escapes. *)
+			let size, cp =
+				if c land 0xE0 = 0xC0 && is_continuation (!i + 1) then
+					2, ((c land 0x1F) lsl 6) lor (byte (!i + 1) land 0x3F)
+				else if c land 0xF0 = 0xE0 && is_continuation (!i + 1) && is_continuation (!i + 2) then
+					3, ((c land 0x0F) lsl 12) lor ((byte (!i + 1) land 0x3F) lsl 6) lor (byte (!i + 2) land 0x3F)
+				else if c land 0xF8 = 0xF0 && is_continuation (!i + 1) && is_continuation (!i + 2) && is_continuation (!i + 3) then
+					4, ((c land 0x07) lsl 18) lor ((byte (!i + 1) land 0x3F) lsl 12) lor ((byte (!i + 2) land 0x3F) lsl 6) lor (byte (!i + 3) land 0x3F)
+				else
+					(* not UTF-8: the byte, as a character of the same value *)
+					1, c
+			in
+			let needs_escape =
+				size = 1
+				|| (cp >= 0x80 && cp <= 0x9F)
+				|| cp = 0x2028 || cp = 0x2029 || cp = 0xFEFF
+				|| (cp >= 0xD800 && cp <= 0xDFFF)
+				|| cp = 0xFFFE || cp = 0xFFFF
+			in
+			if needs_escape then add_unit cp
+			else Buffer.add_string b (String.sub s !i size);
+			i := !i + size
+		end
+	done;
 	Buffer.add_char b '"';
 	Buffer.contents b
 
