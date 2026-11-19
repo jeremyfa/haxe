@@ -176,6 +176,25 @@ class Main {
 		t(RenderTex.maker.count == 2);
 		var sub = new SubRenderTex(3);
 		t(sub.item == "6x6 d1" && sub.extra == 3 && sub.flag);
+		// A statement before super() that the constructor of the parent depends on
+		var guarded = new GuardedChild(5);
+		t(guarded.value == 5 && !GuardedBase.internalAlloc);
+		var direct = false;
+		try {
+			new GuardedBase();
+		} catch (e:Dynamic) {
+			direct = true;
+		}
+		t(direct);
+		// created inside an expression
+		t(makeAll([new GuardedChild(1), new GuardedChild(2)]) == 3);
+	}
+
+	static function makeAll(list:Array<GuardedChild>):Int {
+		var sum = 0;
+		for (g in list)
+			sum += g.value;
+		return sum;
 	}
 
 	static function testOptionalNumbers() {
@@ -1088,6 +1107,26 @@ class Phys {
 		body = new PhysBody();
 		body.seen = shape;
 		body.setRotation(rotation);
+	}
+}
+
+class GuardedBase {
+	public static var internalAlloc = false;
+
+	public function new() {
+		if (!internalAlloc)
+			throw "Cannot instantiate a GuardedBase";
+	}
+}
+
+class GuardedChild extends GuardedBase {
+	public var value:Int;
+
+	public function new(value:Int) {
+		GuardedBase.internalAlloc = true;
+		super();
+		GuardedBase.internalAlloc = false;
+		this.value = value;
 	}
 }
 

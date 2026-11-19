@@ -232,6 +232,19 @@ class Main {
 			sink = sumIterator(new IntRange(N));
 		});
 
+		var holder = new Holder<Tally>(new Tally());
+		check("member access through a constrained type parameter", NONE, () -> {
+			for (i in 0...N)
+				holder.bump(i);
+			sink = holder.total();
+		});
+		check("new of a class with a statement before super(), in an expression", OBJECT_MAX, () -> {
+			var sum = 0;
+			for (i in 0...N)
+				sum += keep(new Guarded(i));
+			sink = sum;
+		});
+
 		if (failures > 0) {
 			Sys.println(failures + " allocation check(s) failed");
 			Sys.exit(1);
@@ -248,4 +261,61 @@ class Main {
 	// One object and nothing else: no dictionary, no array of values, no boxing
 	static inline var POS_MAX = 96.0;
 	static inline var LITERAL_MAX = 64.0;
+	// The object itself (one Int field), and no delegate around its creation
+	static inline var OBJECT_MAX = 40.0;
+
+	static function keep(g:Guarded):Int {
+		keptGuarded = g;
+		return g.value;
+	}
+
+	static var keptGuarded:Guarded;
+}
+
+class Tally {
+	public var count:Int = 0;
+	public var last:Float = 0;
+
+	public function new() {}
+
+	public function add(n:Int):Void {
+		count += n;
+	}
+}
+
+class Holder<T:Tally> {
+	var item:T;
+
+	public function new(item:T) {
+		this.item = item;
+	}
+
+	public function bump(n:Int):Void {
+		item.add(n);
+		item.last = n;
+	}
+
+	public function total():Float {
+		return item.count + item.last;
+	}
+}
+
+class GuardedParent {
+	public static var allowed = false;
+
+	public function new() {
+		if (!allowed)
+			throw "not allowed";
+	}
+}
+
+class Guarded extends GuardedParent {
+	public var value:Int;
+
+	public function new(value:Int) {
+		GuardedParent.allowed = true;
+		super();
+		GuardedParent.allowed = false;
+		this.value = value;
+	}
 }
