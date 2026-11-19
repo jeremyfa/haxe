@@ -1,0 +1,14 @@
+# The output is used the way Unity uses it: a library (-D cs.library) whose
+# static methods are called by a host that has its own entry point.
+-main Main
+-cs bin
+-lib hxcs
+-D cs.library
+-D cs.aot
+-D cs.closure-cache
+# 1. Compile the output like Unity does: .NET Standard 2.1, C# 9, no unsafe code,
+#    and without the NETSTANDARD symbol (Unity does not define it).
+--cmd dotnet build unitylike/UnityLike.csproj -c Release -nodeReuse:false -p:UseSharedCompilation=false
+# 2. Run it from a host that never calls Program.Main.
+--cmd dotnet build host/Host.csproj -c Release -nodeReuse:false -p:UseSharedCompilation=false
+--cmd dotnet run --no-build -c Release --project host/Host.csproj

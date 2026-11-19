@@ -1,2 +1,4 @@
 projects/*/bin/
 projects/*/cs/
+projects/*/*/bin/
+projects/*/*/obj/
