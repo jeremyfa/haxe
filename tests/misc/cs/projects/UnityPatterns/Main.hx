@@ -59,6 +59,8 @@ class Main {
 		test("null given to a local Null of an abstract over a number", testNullLocalOfAbstract);
 		test("arrays of an abstract over a number", testArrayOfAbstract);
 		test("comparison of a Null number next to another condition", testNullComparisonGrouping);
+		test("break of a loop in a switch of an outer loop", testBreakOfInnerLoop);
+		test("Dynamic value in the literal of a typed array", testDynamicInArrayLiteral);
 		test("class extending a native class", testNativeBase);
 		test("stable sort on typed storage", testSort);
 		test("native array of a Haxe array", testArrayData);
@@ -487,6 +489,72 @@ class Main {
 		t(!(a >= b && other == null) && !(a == b && other == null) && (a != b && other == null));
 		// arithmetic regrouped by inlining
 		t(Grouping.scale(1 + ix, 2) == 6 && Grouping.minus(10, ix - 1) == 9);
+	}
+
+	static function testBreakOfInnerLoop() {
+		// The outer loop has a break in a switch (a goto in C#); the break of the inner
+		// loop, in a case of that switch, leaves the inner loop only
+		var ops = [1, 2, 1, 3];
+		var stack = [5, 6, 7, 8];
+		var log = [];
+		var i = 0;
+		while (true) {
+			var op = ops[i++];
+			switch (op) {
+				case 1:
+					var k = stack.length;
+					while (true) {
+						k--;
+						if (stack[k] < 7)
+							break;
+					}
+					log.push("found" + k);
+				case 2:
+					var n = 0;
+					do {
+						n++;
+						if (n == 2)
+							break;
+					} while (true);
+					log.push("n" + n);
+				case 3:
+					break;
+				default:
+			}
+			log.push("op" + op);
+		}
+		t(log.join(",") == "found1,op1,n2,op2,found1,op1");
+		// the same with the inner loop as a value
+		var out = [];
+		for (op in ops) {
+			switch (op) {
+				case 1:
+					var first = -1;
+					for (j in 0...stack.length) {
+						if (stack[j] > 5) {
+							first = j;
+							break;
+						}
+					}
+					out.push(first);
+				case 3:
+					break;
+				default:
+					out.push(-op);
+			}
+		}
+		t(out.join(",") == "1,-2,1");
+	}
+
+	static function testDynamicInArrayLiteral() {
+		var data:Dynamic = {name: "n", count: 2};
+		// captured and assigned in a closure: kept in an array of its type
+		var name:Null<String> = data.name;
+		var set = () -> name = name + "!";
+		set();
+		t(name == "n!");
+		var names:Array<String> = [data.name, "x"];
+		t(names.join(",") == "n,x");
 	}
 
 	static function testNativeBase() {

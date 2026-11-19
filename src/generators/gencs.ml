@@ -4802,8 +4802,19 @@ let rec cs_expr_of_texpr ectx e =
 					) items cs_items in
 					(elem_cs_type, coerced_items)
 				| _ ->
-					(* Reference type - use actual element type *)
-					(elem_cs_type, cs_items)
+					(* Reference type - use actual element type. A Dynamic value in a
+					   literal of a typed array (a String[]) is converted to that type. *)
+					let coerced_items = match elem_cs_type with
+						| CsTypeObject | CsTypeDynamic | CsTypeGenericParam _ -> cs_items
+						| _ ->
+							List.map2 (fun item cs_item ->
+								match cs_type_of_type ectx.gctx (get_effective_expr_type ectx.gctx item) with
+								| CsTypeObject | CsTypeDynamic when cs_item <> CsNull ->
+									coerce_arg ~in_scope:ectx.type_params_in_scope ~fresh_temp:(fun () -> fresh_temp ectx) ectx.gctx cs_item (get_effective_expr_type ectx.gctx item) elem_hx_type
+								| _ -> cs_item
+							) items cs_items
+					in
+					(elem_cs_type, coerced_items)
 			in
 			let native_array = CsNewArray (native_array_type, native_array_items) in
 			make_array_from_native storage_type native_array array_type
@@ -5655,7 +5666,19 @@ and cs_stmt_with_result_assign ectx is_void result_var result_type e =
 		(* While loop as expression - the loop body's last expression assigns to result_var.
 		   For do-while loops that produce a value (like atomic operations), the result
 		   is typically assigned inside the loop body. *)
+		(* The breaks of this loop are its own (see the TWhile statement) *)
+		let break_label = if has_break_in_switch body then begin
+			let label = Printf.sprintf "_hx_break_%d" ectx.temp_count in
+			ectx.temp_count <- ectx.temp_count + 1;
+			Some label
+		end else None in
+		let old_loop_break_label = ectx.loop_break_label in
+		let old_in_switch = ectx.in_switch in
+		ectx.loop_break_label <- break_label;
+		ectx.in_switch <- false;
 		let body_with_assign = cs_stmt_with_result_assign ectx is_void result_var result_type body in
+		ectx.loop_break_label <- old_loop_break_label;
+		ectx.in_switch <- old_in_switch;
 		let cond_cs = cs_expr_of_texpr ectx cond in
 		let cond_cs = match cs_type_of_type ectx.gctx cond.etype with
 			| CsTypeObject | CsTypeDynamic ->
@@ -5663,9 +5686,13 @@ and cs_stmt_with_result_assign ectx is_void result_var result_type e =
 					CsStaticCall (runtime_type, "toBool", [cond_cs])
 			| _ -> cond_cs
 		in
-		begin match flag with
-		| NormalWhile -> CsWhile (cond_cs, body_with_assign)
-		| DoWhile -> CsDoWhile (body_with_assign, cond_cs)
+		let loop = match flag with
+			| NormalWhile -> CsWhile (cond_cs, body_with_assign)
+			| DoWhile -> CsDoWhile (body_with_assign, cond_cs)
+		in
+		begin match break_label with
+		| Some label -> CsStmtList [loop; CsLabel label]
+		| None -> loop
 		end
 	| TThrow throw_e ->
 		(* Throw doesn't assign - just emit throw statement *)
@@ -6041,12 +6068,23 @@ and cs_stmt_of_texpr ectx e =
 			let break_label = Printf.sprintf "_hx_break_%d" ectx.temp_count in
 			ectx.temp_count <- ectx.temp_count + 1;
 			let old_loop_break_label = ectx.loop_break_label in
+			let old_in_switch = ectx.in_switch in
 			ectx.loop_break_label <- Some break_label;
+			ectx.in_switch <- false;
 			let body_cs = cs_stmt_of_texpr ectx body in
 			ectx.loop_break_label <- old_loop_break_label;
+			ectx.in_switch <- old_in_switch;
 			CsStmtList [CsWhile (cond_cs, body_cs); CsLabel break_label]
 		end else begin
+			(* A break of this loop is a C# break, also when the loop is itself in a switch
+			   of an outer loop: what the outer loop set does not apply in here *)
+			let old_loop_break_label = ectx.loop_break_label in
+			let old_in_switch = ectx.in_switch in
+			ectx.loop_break_label <- None;
+			ectx.in_switch <- false;
 			let body_cs = cs_stmt_of_texpr ectx body in
+			ectx.loop_break_label <- old_loop_break_label;
+			ectx.in_switch <- old_in_switch;
 			CsWhile (cond_cs, body_cs)
 		end
 	| TWhile (cond, body, DoWhile) ->
@@ -6064,12 +6102,23 @@ and cs_stmt_of_texpr ectx e =
 			let break_label = Printf.sprintf "_hx_break_%d" ectx.temp_count in
 			ectx.temp_count <- ectx.temp_count + 1;
 			let old_loop_break_label = ectx.loop_break_label in
+			let old_in_switch = ectx.in_switch in
 			ectx.loop_break_label <- Some break_label;
+			ectx.in_switch <- false;
 			let body_cs = cs_stmt_of_texpr ectx body in
 			ectx.loop_break_label <- old_loop_break_label;
+			ectx.in_switch <- old_in_switch;
 			CsStmtList [CsDoWhile (body_cs, cond_cs); CsLabel break_label]
 		end else begin
+			(* A break of this loop is a C# break, also when the loop is itself in a switch
+			   of an outer loop: what the outer loop set does not apply in here *)
+			let old_loop_break_label = ectx.loop_break_label in
+			let old_in_switch = ectx.in_switch in
+			ectx.loop_break_label <- None;
+			ectx.in_switch <- false;
 			let body_cs = cs_stmt_of_texpr ectx body in
+			ectx.loop_break_label <- old_loop_break_label;
+			ectx.in_switch <- old_in_switch;
 			CsDoWhile (body_cs, cond_cs)
 		end
 	| TSwitch (sw_subject,sw_cases,sw_default) ->
