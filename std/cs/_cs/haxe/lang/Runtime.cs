@@ -588,7 +588,7 @@ namespace haxe.lang
         /// Create a default value for the given type.
         /// AOT-safe: handles Null&lt;T&gt; without reflection by checking common types directly.
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2067",
             Justification = "Null<T> is a struct; parameterless struct constructors are intrinsic and always available")]
 #endif
@@ -637,7 +637,7 @@ namespace haxe.lang
         /// <summary>
         /// Create a Null&lt;T&gt; from a dynamic value, AOT-safe.
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2067",
             Justification = "Null<T> is a struct; parameterless struct constructors are intrinsic and always available")]
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2090",
@@ -710,7 +710,7 @@ namespace haxe.lang
         /// For HaxeObject subclasses, uses _hx_getField (AOT-safe).
         /// For other objects, uses reflection (may not work in AOT for all types).
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection for non-Haxe objects; Haxe objects use _hx_getField")]
 #endif
@@ -753,7 +753,7 @@ namespace haxe.lang
 
         // Kept out of getField: the lambda captures its arguments, and C# allocates the
         // capture when the method that declares it is entered, on every call.
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2070",
             Justification = "Fallback reflection for non-Haxe objects")]
 #endif
@@ -771,7 +771,7 @@ namespace haxe.lang
         /// For HaxeObject subclasses, uses _hx_setField (AOT-safe).
         /// For other objects, uses reflection (may not work in AOT for all types).
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection for non-Haxe objects; Haxe objects use _hx_setField")]
 #endif
@@ -812,7 +812,7 @@ namespace haxe.lang
         /// For HaxeObject subclasses, uses _hx_setField (AOT-safe).
         /// For other objects, uses reflection (may not work in AOT for all types).
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection for non-Haxe objects; Haxe objects use _hx_setField")]
 #endif

@@ -90,11 +90,24 @@ class FileSystem {
 	public static function fullPath(relPath:String):String {
 		var fileInfo = new FileInfo(relPath);
 		var fullName = fileInfo.FullName;
-		// Resolve symlinks if the path is a symlink
-		var linkTarget:String = cs.Syntax.code("global::System.IO.File.ResolveLinkTarget({0}, true)?.FullName", fullName);
+		// Resolve symlinks if the path is a symlink. ResolveLinkTarget is .NET 6+ only:
+		// against .NET Standard 2.1 (Unity), the full path is returned as it is.
+		var linkTarget:String = cs.Syntax.code("
+#if NET6_0_OR_GREATER
+			global::System.IO.File.ResolveLinkTarget({0}, true)?.FullName
+#else
+			null
+#endif
+		", fullName);
 		if (linkTarget != null)
 			return linkTarget;
-		var dirLinkTarget:String = cs.Syntax.code("global::System.IO.Directory.ResolveLinkTarget({0}, true)?.FullName", fullName);
+		var dirLinkTarget:String = cs.Syntax.code("
+#if NET6_0_OR_GREATER
+			global::System.IO.Directory.ResolveLinkTarget({0}, true)?.FullName
+#else
+			null
+#endif
+		", fullName);
 		if (dirLinkTarget != null)
 			return dirLinkTarget;
 		return fullName;

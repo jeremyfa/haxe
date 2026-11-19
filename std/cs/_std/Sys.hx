@@ -216,7 +216,7 @@ import cs.system.reflection.Assembly;
 		// Try multiple approaches for AOT compatibility
 		// 1. Environment.ProcessPath (.NET 6+ only, not in .NET Standard 2.1)
 		var path:String = cs.Syntax.code("
-#if !NETSTANDARD
+#if NET6_0_OR_GREATER
 			global::System.Environment.ProcessPath
 #else
 			null

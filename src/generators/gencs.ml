@@ -10833,8 +10833,11 @@ let generate com =
 		source_files := rel_path :: !source_files
 	) files;
 
-	(* Generate Program.cs with Main entry point if we have an entry point *)
-	begin match Common.get_entry_point com with
+	(* Generate Program.cs with Main entry point if we have an entry point.
+	   With -D cs.library the output is hosted by another program (Unity for example),
+	   which calls the static methods of the Haxe code itself: no Program.cs. *)
+	let is_library = Common.defined com DefineList.CsLibrary in
+	begin match (if is_library then None else Common.get_entry_point com) with
 	| Some (_, entry_class, main_expr) ->
 		let main_class_path = cs_path_of_path entry_class.cl_path in
 		(* The main expression of Haxe 4.3 is a sequence of static calls: main(), then
@@ -10863,18 +10866,22 @@ public class Program
 {
     public static void Main(string[] args)
     {
-        global::haxe.lang.HaxeReflection.initCallback = HaxeReflectionInit.initType;
-
         %s
     }
 }
 " (String.concat "\n        " calls) in
 		write_file com.file "Program.cs" program_content;
-		source_files := "Program.cs" :: !source_files;
+		source_files := "Program.cs" :: !source_files
+	| None -> ()
+	end;
 
+	begin
 		(* Generate HaxeReflectionInit.cs — lazy dispatch function for reflection initialization.
 		   Contains a switch on type name that calls _hx_bind() for classes/enums
-		   and registers field names / metadata for interfaces. *)
+		   and registers field names / metadata for interfaces.
+		   Always generated, with or without an entry point: HaxeReflection refers to
+		   HaxeReflectionInit.initType by itself, so that reflection also works when the
+		   host never runs Program.Main. *)
 
 		(* Class/enum switch cases: call _hx_bind() *)
 		let class_cases = List.rev_map (fun path ->
@@ -10981,7 +10988,6 @@ public static class HaxeReflectionInit
 " body in
 		write_file com.file "HaxeReflectionInit.cs" init_content;
 		source_files := "HaxeReflectionInit.cs" :: !source_files
-	| None -> ()
 	end;
 
 	(* Copy runtime support files from std/cs/_cs/ *)
@@ -11027,7 +11033,7 @@ public static class HaxeReflectionInit
 	let proj = {
 		proj_name = "HaxeProject";
 		proj_target_framework = target_framework;
-		proj_output_type = "Exe";
+		proj_output_type = if is_library then "Library" else "Exe";
 		proj_references = references;
 	} in
 	write_file com.file "Project.csproj" (generate_csproj proj);

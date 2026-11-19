@@ -15,8 +15,10 @@ namespace haxe.lang
         // Dictionary keyed by typeof(X).FullName (string)
         private static readonly Dictionary<string, StaticAccessors> registry = new Dictionary<string, StaticAccessors>();
 
-        // Lazy init callback — set by Program.cs at startup, dispatches to per-class _hx_bind()
-        internal static Action<string> initCallback;
+        // Lazy init callback: dispatches to per-class _hx_bind(). It refers to the generated
+        // HaxeReflectionInit by itself, so that reflection works whoever runs the Haxe code:
+        // Program.Main, or a host that calls static methods directly (Unity for example).
+        internal static Action<string> initCallback = global::HaxeReflectionInit.initType;
 
         /// <summary>
         /// Called from _hx_bind() methods of generated classes.
@@ -38,7 +40,7 @@ namespace haxe.lang
         /// Called from Reflect.field when o is a System.Type.
         /// Returns the static field value for the given type and field name.
         /// </summary>
-        public static object getField(System.Type type, string name)
+        public static object getField(global::System.Type type, string name)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -61,7 +63,7 @@ namespace haxe.lang
         /// Called from Reflect.hasField when o is a System.Type.
         /// Returns true if the type has a static field with the given name.
         /// </summary>
-        public static bool hasField(System.Type type, string name)
+        public static bool hasField(global::System.Type type, string name)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -79,7 +81,7 @@ namespace haxe.lang
         /// Returns the array of static (class) field names for a type, or null if not registered.
         /// Used by Type.getClassFields() for AOT-safe field enumeration.
         /// </summary>
-        public static string[] getClassFieldNames(System.Type type)
+        public static string[] getClassFieldNames(global::System.Type type)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -95,7 +97,7 @@ namespace haxe.lang
         /// Returns the array of instance field names for a type, or null if not registered.
         /// Used by Type.getInstanceFields() for AOT-safe field enumeration.
         /// </summary>
-        public static string[] getInstanceFieldNames(System.Type type)
+        public static string[] getInstanceFieldNames(global::System.Type type)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -112,7 +114,7 @@ namespace haxe.lang
         /// Used by Type.getEnumConstructs() for AOT-safe enum constructor enumeration.
         /// Constructor names are stored in declaration order (by _hx_index).
         /// </summary>
-        public static string[] getEnumConstructs(System.Type type)
+        public static string[] getEnumConstructs(global::System.Type type)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -128,7 +130,7 @@ namespace haxe.lang
         /// Creates an empty (uninitialized) instance of a Haxe class.
         /// Uses the registered emptyFactory Function from _hx_bind().
         /// </summary>
-        public static object createEmpty(System.Type type)
+        public static object createEmpty(global::System.Type type)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -139,12 +141,12 @@ namespace haxe.lang
             }
             if (acc != null && acc.emptyFactory != null)
             {
-                return ((ConstructorFunction)acc.emptyFactory).create(System.Array.Empty<object>());
+                return ((ConstructorFunction)acc.emptyFactory).create(global::System.Array.Empty<object>());
             }
             // Fallback for non-registered types (native C# classes)
             try
             {
-                return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+                return global::System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
             }
             catch
             {
@@ -156,7 +158,7 @@ namespace haxe.lang
         /// Creates an initialized instance of a Haxe class by calling its constructor.
         /// Uses the registered factory Function from _hx_bind().
         /// </summary>
-        public static object create(System.Type type, object[] args)
+        public static object create(global::System.Type type, object[] args)
         {
             var typeName = type.FullName;
             StaticAccessors acc;
@@ -180,8 +182,8 @@ namespace haxe.lang
             try
             {
                 if (args.Length == 0)
-                    return System.Activator.CreateInstance(type);
-                return System.Activator.CreateInstance(type, args);
+                    return global::System.Activator.CreateInstance(type);
+                return global::System.Activator.CreateInstance(type, args);
             }
             catch
             {

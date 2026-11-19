@@ -98,7 +98,7 @@ namespace haxe.lang
         /// Get a field by name. Subclasses should override this with a switch statement for AOT compatibility.
         /// Default implementation uses reflection as fallback.
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection - subclasses should override for AOT")]
 #endif
@@ -117,7 +117,7 @@ namespace haxe.lang
         /// Set a field by name. Subclasses should override this with a switch statement for AOT compatibility.
         /// Default implementation uses reflection as fallback.
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection - subclasses should override for AOT")]
 #endif
@@ -140,7 +140,7 @@ namespace haxe.lang
         /// Get all instance field names. Subclasses override this with a hardcoded array in AOT mode.
         /// Default implementation uses reflection as fallback (works in JIT mode).
         /// </summary>
-#if !NETSTANDARD
+#if NET5_0_OR_GREATER
         [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL2075",
             Justification = "Fallback reflection - subclasses should override for AOT")]
 #endif

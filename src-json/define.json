@@ -68,6 +68,12 @@
 		"platforms": ["cs"]
 	},
 	{
+		"name": "CsLibrary",
+		"define": "cs.library",
+		"doc": "Generate a C# library for a host that calls the Haxe code itself (Unity for example): no Program.cs, and the generated project is a library.",
+		"platforms": ["cs"]
+	},
+	{
 		"name": "CsNetTarget",
 		"define": "cs.net-target",
 		"doc": "Set the .NET library target name for loading C# extern API definitions. (default: netstandard)",

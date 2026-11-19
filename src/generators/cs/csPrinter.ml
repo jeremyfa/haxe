@@ -952,14 +952,16 @@ let print_property ctx p =
 
 (* Print C# attribute *)
 let print_attribute ctx attr =
-	(* UnconditionalSuppressMessage is .NET 5+ only, wrap in #if !NETSTANDARD *)
+	(* UnconditionalSuppressMessage is .NET 5+ only. Hosts that compile the output
+	   themselves against .NET Standard 2.1 (Unity) do not define NETSTANDARD, so the
+	   check is on the symbol that only the .NET 5+ SDK defines. *)
 	let is_aot_only_attr =
 		(String.length attr.attr_name >= 30 &&
 			String.sub attr.attr_name 0 30 = "System.Diagnostics.CodeAnalysi") ||
 		(String.length attr.attr_name >= 38 &&
 			String.sub attr.attr_name 0 38 = "global::System.Diagnostics.CodeAnalysi") in
 	if is_aot_only_attr then begin
-		print ctx "#if !NETSTANDARD";
+		print ctx "#if NET5_0_OR_GREATER";
 		newline ctx
 	end;
 	print ctx "[";
@@ -1241,8 +1243,10 @@ let generate_sources_props source_files =
 	Buffer.add_string b "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n";
 	Buffer.add_string b "  </PropertyGroup>\n";
 	Buffer.add_string b "  <ItemGroup>\n";
+	(* Paths relative to Sources.props itself, not to the project that imports it:
+	   another project (a host, a test) can then import the list from its own folder. *)
 	List.iter (fun file ->
-		Buffer.add_string b (Printf.sprintf "    <Compile Include=\"%s\" />\n" file)
+		Buffer.add_string b (Printf.sprintf "    <Compile Include=\"$(MSBuildThisFileDirectory)%s\" />\n" file)
 	) source_files;
 	Buffer.add_string b "  </ItemGroup>\n";
 	Buffer.add_string b "</Project>\n";

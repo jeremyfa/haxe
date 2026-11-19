@@ -67,13 +67,13 @@ class StringExt {
 			return si;
 		}
 		if (startIndex == null)
-			return cs.Syntax.code("{0}.IndexOf({1}, System.StringComparison.Ordinal)", me, str);
+			return cs.Syntax.code("{0}.IndexOf({1}, global::System.StringComparison.Ordinal)", me, str);
 		else {
 			var sIndex:Int = startIndex;
 			if (sIndex < 0) sIndex = 0;
 			if (sIndex >= me.length)
 				return -1;
-			return cs.Syntax.code("{0}.IndexOf({1}, {2}, System.StringComparison.Ordinal)", me, str, sIndex);
+			return cs.Syntax.code("{0}.IndexOf({1}, {2}, global::System.StringComparison.Ordinal)", me, str, sIndex);
 		}
 	}
 
@@ -114,7 +114,7 @@ class StringExt {
 			return -1;
 		} else {
 			// Only use native LastIndexOf when no startIndex is provided
-			return cs.Syntax.code("{0}.LastIndexOf({1}, {2}, System.StringComparison.Ordinal)", me, str, sIndex);
+			return cs.Syntax.code("{0}.LastIndexOf({1}, {2}, global::System.StringComparison.Ordinal)", me, str, sIndex);
 		}
 	}
 
@@ -126,7 +126,7 @@ class StringExt {
 			}
 		} else {
 			// Split returns string[], wrap each element into the result array
-			var nativeParts:cs.NativeArray<String> = cs.Syntax.code("{0}.Split(new string[] { {1} }, System.StringSplitOptions.None)", me, delimiter);
+			var nativeParts:cs.NativeArray<String> = cs.Syntax.code("{0}.Split(new string[] { {1} }, global::System.StringSplitOptions.None)", me, delimiter);
 			var i = 0;
 			var len:Int = cs.Syntax.code("{0}.Length", nativeParts);
 			while (i < len) {

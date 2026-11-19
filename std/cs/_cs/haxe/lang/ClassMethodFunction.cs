@@ -360,7 +360,7 @@ namespace haxe.lang
 
         public override int GetHashCode()
         {
-            if (_methodId == -1) return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+            if (_methodId == -1) return global::System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
             unchecked
             {
                 int hash = 17;
