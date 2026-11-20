@@ -1114,8 +1114,16 @@ let gen_str macro gen s =
 ;;
 
 
-let strq ctx s =
+let rec strq ctx s =
    if (Common.defined ctx Define.HxcppSmartStings) && (has_utf8_chars s) then
+      (* MSVC refuses a string literal longer than 16380 bytes (error C2026):
+         a long text is the sum of shorter literals, as gen_str does for ASCII.
+         4000 characters are at most 16000 bytes of UTF-16. *)
+      let count = (try UTF8.length s with _ -> 0) in
+      if count > 4000 then begin
+         let half = UTF8.nth s (count lsr 1) in
+         "(" ^ (strq ctx (String.sub s 0 half)) ^ "+" ^ (strq ctx (String.sub s half ((String.length s) - half))) ^ ")"
+      end else begin
       let b = Buffer.create 0 in
 
       let add ichar =
@@ -1132,6 +1140,7 @@ let strq ctx s =
       in
       UTF8.iter (fun c -> add (UCharExt.code c) ) s;
       "HX_W(u\"" ^ (Buffer.contents b) ^ "\"," ^ (gen_wqstring_hash s) ^ ")"
+      end
    else
        gen_str "HX_" gen_qstring_hash s
 ;;
